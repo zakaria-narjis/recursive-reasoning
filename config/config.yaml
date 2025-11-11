@@ -1,0 +1,55 @@
+# configs/mnist_config.yaml
+
+description: "Training a recursive CNN on MNIST (digits 0-9) using a DDP framework."
+
+# Model configuration
+model:
+  name: "SimpleCNN"
+  in_channels: 1
+  num_classes: 10
+
+# Dataset configuration
+data:
+  path: "./data" # Path to download/load MNIST
+  val_split_size: 0.1 # 10% of training data for validation
+  dataloader_workers:
+    train: 4
+    val: 2
+    test: 2
+
+# Recursion hyperparameters
+recursion:
+  N_supervision_steps: 5 # The outer loop for deep supervision (from pseudo-code)
+  N_latent_steps: 6      # The 'n' in latent_recursion
+  N_deep_steps: 3        # The 'T' in deep_recursion
+
+# Training parameters
+training:
+  epochs: 10
+  batch_size: 64 # Per GPU batch size
+  learning_rate: 1.0e-3
+  weight_decay: 0.01
+  # quality_loss_weight: 0.5 # Weight for the q_hat loss <-- REMOVED
+  scale_lr_by_world_size: true # If true, effective_lr = learning_rate * world_size
+  lr_scheduler_type: "cosine" # "cosine", "step", "none"
+  warmup_steps: 100
+  gradient_accumulation_steps: 1 # Note: DDP + per-step .backward() means grad_accum is complex. Keeping at 1.
+  early_stopping:
+    enabled: true
+    patience: 3
+    metric: "val_loss" # or "val_accuracy"
+    mode: "min" # "min" for loss, "max" for accuracy
+
+# Testing (Inference) parameters
+testing:
+  Nsup: 10 # Number of supervision steps for inference
+
+# Distributed Data Parallel (DDP) configuration
+ddp:
+  backend: "nccl" # 'nccl' for NVIDIA GPUs, 'gloo' for CPU
+
+# Saving configuration
+saving:
+  base_output_dir: "./experiments" # Base directory for all experiments
+  save_only_on_rank_0: true
+  best_model_name: "best_model.pth"
