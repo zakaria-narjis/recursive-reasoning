@@ -5,7 +5,7 @@ from torch.utils.data.distributed import DistributedSampler
 from torchvision import datasets, transforms
 import os
 
-def get_dataloaders(config, rank, world_size):
+def get_dataloaders(config, rank, world_size,seed=42):
     """
     Creates training, validation, and test dataloaders for MNIST.
     """
@@ -58,13 +58,10 @@ def get_dataloaders(config, rank, world_size):
     train_size = dataset_size - val_size
 
     # Use a fixed generator for reproducible splits
-    train_indices, val_indices = random_split(
-        range(dataset_size), [train_size, val_size],
-        generator=torch.Generator().manual_seed(42)
+    train_dataset, val_dataset = random_split(
+        full_train_dataset, [train_size, val_size],
+        generator=torch.Generator().manual_seed(seed)
     )
-    
-    train_dataset = Subset(full_train_dataset, train_indices)
-    val_dataset = Subset(full_train_dataset, val_indices)
 
     # Create DistributedSamplers
     train_sampler = DistributedSampler(

@@ -11,10 +11,13 @@ class SimpleCNN(nn.Module):
     def __init__(self, in_channels=1, num_classes=10):
         super(SimpleCNN, self).__init__()
         
-        # 1. Embedding Layer (Image to Feature Map)
-        # A small CNN to map the input image to a flattened feature vector.
-        # Params: (1*9+1)*16 + (16*9+1)*32 = 160 + 4640 = 4,800
-        self.embedding_layer = nn.Sequential(
+        # --- CONSTANT STATE DIMENSION ---
+        # The input embedding, latent embedding, and output embedding must all be 512D.
+        self.STATE_DIM = 512
+        
+        # 1. CNN Feature Extractor 
+        # The initial part of the Embedding CNN, which outputs a feature map (B, 32, 7, 7).
+        self.cnn_extractor = nn.Sequential(
             nn.Conv2d(in_channels, 16, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2, padding=0), # Output: (B, 16, 14, 14)
@@ -26,72 +29,92 @@ class SimpleCNN(nn.Module):
         # Calculate the flattened feature size
         self.flattened_size = 32 * 7 * 7 # 1568
 
-        # 2. Backbone (Feature Processing MLP)
-        # This layer processes the features from the embedding layer.
-        # Params: (1568*1024 + 1024) + (1024*128 + 128) = 1,606,656 + 131,200 = 1,737,856
-        self.backbone = nn.Sequential(
+        # 2. Input Embedding Projection (Completes the Embedding CNN)
+        # Maps the 1568D flattened feature vector to the 512D input state (input_embed).
+        self.input_embed_projection = nn.Sequential(
             nn.Flatten(),
             nn.Linear(self.flattened_size, 1024),
             nn.ReLU(),
-            nn.Linear(1024, 128),
+            nn.Linear(1024, self.STATE_DIM), # Output is 512D
             nn.ReLU(),
         )
         
-        # 3. Output Head (Classifier)
-        # This layer takes the processed features and makes a classification.
-        # Params: (128*10 + 10) = 1,290
-        self.output_head = nn.Linear(128, num_classes)
+        # 3. Recursive Backbone (State Processor)
+        # This is the SINGLE component used for ALL recursive state transformations.
+        # It takes a 512D fused state and outputs a new 512D state (512D -> 512D).
+        self.backbone = nn.Sequential(
+            nn.Linear(self.STATE_DIM, 1024),
+            nn.ReLU(),
+            nn.Linear(1024, self.STATE_DIM), # Output is 512D
+            nn.ReLU(),
+        )
+        
+        # 4. Output Head (Classifier)
+        # This layer takes the final 512D output embedding and makes a classification.
+        self.output_head = nn.Linear(self.STATE_DIM, num_classes)
 
-    def forward(self, raw_input, Nsup=16):
-        """
-        Forwad pass only for inference
-        args:
-        raw_input: Input image tensor.
-        Nsup: Number of deep supervision steps.
-        """
-        # Initial embedding
-        assert self.training == False, "Forward method is only for inference."
-        input_embed = self.embedding_layer(raw_input)
-        output_embed = torch.empty_like(input_embed).normal_(mean=0.0, std=1.0)
-        latent_embed = torch.empty_like(input_embed).normal_(mean=0.0, std=1.0)
+    def get_input_embedding(self, raw_input):
+        """Helper to compute the (B, 512) initial input embedding."""
+        x = self.cnn_extractor(raw_input)
+        input_embed = self.input_embed_projection(x)
+        return input_embed
 
-        for step in range(Nsup):
-            output_embed, latent_embed, output = self.deep_recursion(raw_input, output_embed, latent_embed, n=6, T=3)
-        return output
-
-    def latent_recursion(self, input_embed, output_embed, latent_embed,n=6):
+    def latent_recursion(self, input_embed, output_embed, latent_embed, n=6):
         """
-        A method to perform latent recursive reasoning.
-        args:
-        raw_input: Original input image tensor.
-        output_embed: Previous output embedding tensor.
-        latent_embed: Previous latent embedding tensor.
-        n: Number of latent recursive reasoning steps.
+        Performs latent recursive reasoning using only self.backbone.
+        All inputs and outputs are (B, 512).
         """
-        for i in range(n):
-            latent_embed = self.backbone(input_embed + output_embed + latent_embed)
-        output_embed = self.backbone(latent_embed + input_embed)
+        if n > 0:
+            for i in range(n):
+                # Fusing the 512D states via addition (input + output + latent)
+                fused_state = input_embed + output_embed + latent_embed
+                latent_embed = self.backbone(fused_state) # 512D -> 512D
+                
+            # Fusing the 512D states (latent + input) to compute the new output
+            fused_state = latent_embed + input_embed
+            output_embed = self.backbone(fused_state) # 512D -> 512D
+        else :
+            # If n=0, skip recursion and just return inputs
+            fused_state = input_embed + output_embed + latent_embed
+            output_embed = self.backbone(fused_state)
         return output_embed, latent_embed
     
     def deep_recursion(self, raw_input, output_embed, latent_embed,n=6, T=3):
         """
-        A method to perform deep recursive reasoning over T time steps.
-        args:
-        raw_input: Original input image tensor.
-        output_embed: Initial output embedding tensor.
-        latent_embed: Initial latent embedding tensor.
-        n: Number of latent recursive reasoning steps per time step.
-        T: Number of time steps for deep recursion.
-        returns:
-        output_embed: Final output embedding tensor.
-        latent_embed: Final latent embedding tensor.
-        logits: Classification logits tensor.
+        Performs one step of deep recursive reasoning over T time steps.
         """
-        input_embed = self.embedding_layer(raw_input)
+        # Get the 512D input embedding
+        input_embed = self.get_input_embedding(raw_input)
+        
         with torch.no_grad():
             for j in range(T-1):
                 output_embed, latent_embed = self.latent_recursion(input_embed, output_embed, latent_embed, n)
+        
         # Final recursion with gradients
         output_embed, latent_embed = self.latent_recursion(input_embed, output_embed, latent_embed, n)
+        
+        # Classify the final 512D output embedding
         logits = self.output_head(output_embed)
+        
         return output_embed.detach(), latent_embed.detach(), logits
+
+    def forward(self, raw_input, Nsup=16, n_latent=6):
+        """
+        Forward pass for inference.
+        """
+        assert not self.training, "Forward method is only for inference."
+        
+        input_embed = self.get_input_embedding(raw_input)
+        B = raw_input.shape[0]
+        dev = raw_input.device
+
+        # Initialize state embeddings to the correct (B, 512) shape
+        output_embed = torch.randn(B, self.STATE_DIM, device=dev)
+        latent_embed = torch.randn(B, self.STATE_DIM, device=dev)
+
+        logits = None
+        for _ in range(Nsup):
+            output_embed, latent_embed, logits = self.deep_recursion(
+                raw_input, output_embed, latent_embed, n=n_latent, T=3
+            )
+        return logits

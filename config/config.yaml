@@ -2,6 +2,7 @@
 
 description: "Training a recursive CNN on MNIST (digits 0-9) using a DDP framework."
 
+seed : 42 # Random seed for reproducibility
 # Model configuration
 model:
   name: "SimpleCNN"
@@ -10,7 +11,7 @@ model:
 
 # Dataset configuration
 data:
-  path: "./data" # Path to download/load MNIST
+  path: "/scratch/narjis/" # Path to download/load MNIST
   val_split_size: 0.1 # 10% of training data for validation
   dataloader_workers:
     train: 4
@@ -19,30 +20,30 @@ data:
 
 # Recursion hyperparameters
 recursion:
-  N_supervision_steps: 5 # The outer loop for deep supervision (from pseudo-code)
-  N_latent_steps: 6      # The 'n' in latent_recursion
-  N_deep_steps: 3        # The 'T' in deep_recursion
-
+  N_supervision_steps: 1 # The outer loop for deep supervision (from pseudo-code)
+  N_latent_steps: 0      # The 'n' in latent_recursion
+  N_deep_steps: 1      # The 'T' in deep_recursion
+  init_strategy: "zeros" # "zeros" or "random", if init_strategy is zeros and N_latent_steps=1 and N_deep_steps=1, model reduces to network without recursion
 # Training parameters
 training:
-  epochs: 10
+  epochs: 20
   batch_size: 64 # Per GPU batch size
   learning_rate: 1.0e-3
   weight_decay: 0.01
   # quality_loss_weight: 0.5 # Weight for the q_hat loss <-- REMOVED
   scale_lr_by_world_size: true # If true, effective_lr = learning_rate * world_size
-  lr_scheduler_type: "cosine" # "cosine", "step", "none"
-  warmup_steps: 100
+  lr_scheduler_type: "step" # "cosine", "step", "none"
+  warmup_steps: 0
   gradient_accumulation_steps: 1 # Note: DDP + per-step .backward() means grad_accum is complex. Keeping at 1.
   early_stopping:
-    enabled: true
+    enabled: False
     patience: 3
-    metric: "val_loss" # or "val_accuracy"
+    metric: "val_accuracy" # or "val_accuracy"
     mode: "min" # "min" for loss, "max" for accuracy
 
 # Testing (Inference) parameters
 testing:
-  Nsup: 10 # Number of supervision steps for inference
+  Nsup: 1 # Number of supervision steps for inference
 
 # Distributed Data Parallel (DDP) configuration
 ddp:

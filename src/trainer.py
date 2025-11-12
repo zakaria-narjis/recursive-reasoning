@@ -3,11 +3,10 @@ import torch
 import torch.nn as nn
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import AdamW
-from transformers import get_scheduler
 from tqdm import tqdm
 import os
 import torch.distributed as dist
-import json
+from utils import get_scheduler  # Import custom scheduler
 
 class Trainer:
     def __init__(self, model, config, train_loader, val_loader, rank, world_size):
@@ -19,31 +18,39 @@ class Trainer:
         self.world_size = world_size
         self.device = torch.device(f"cuda:{self.rank}")
         
-        self.best_metric_value = float('inf') if self.config['training']['early_stopping']['mode'] == 'min' else float('-inf')
-        self.output_dir = self.config['saving'].get('output_dir', './experiments')
+        self.output_dir = self.config['saving']['output_dir']
         self.best_model_path = os.path.join(self.output_dir, self.config['saving']['best_model_name'])
 
         # Loss functions
         self.classification_criterion = nn.CrossEntropyLoss().to(self.device)
-        # self.quality_criterion = nn.BCEWithLogitsLoss().to(self.device) # For q_hat <-- REMOVED
 
         # Recursion HParams
         self.N_supervision = self.config['recursion']['N_supervision_steps']
         self.N_latent = self.config['recursion']['N_latent_steps']
         self.N_deep = self.config['recursion']['N_deep_steps']
-        # self.quality_weight = self.config['training']['quality_loss_weight'] <-- REMOVED
         self.Nsup_inference = self.config['testing']['Nsup']
 
-        # Early stopping setup
-        self.early_stop_config = self.config['training'].get('early_stopping', {'enabled': False})
-        if self.early_stop_config.get('enabled', False):
-            # ... (early stopping setup identical to previous file) ...
-            self.es_patience = self.early_stop_config.get('patience', 3)
-            self.es_metric = self.early_stop_config.get('metric', 'val_loss')
-            self.es_mode = self.early_stop_config.get('mode', 'min')
+        # Early stopping setup - ALWAYS initialize these attributes
+        self.early_stop_config = self.config['training']['early_stopping']
+        self.early_stopping_enabled = self.early_stop_config['enabled']
+        
+        if self.early_stopping_enabled:
+            self.es_patience = self.early_stop_config['patience']
+            self.es_metric = self.early_stop_config['metric']
+            self.es_mode = self.early_stop_config['mode']
             self.es_counter = 0
+            self.best_metric_value = float('inf') if self.es_mode == 'min' else float('-inf')
             if self.rank == 0:
                 print(f"Early stopping enabled: monitor='{self.es_metric}', mode='{self.es_mode}', patience={self.es_patience}")
+        else:
+            # Initialize with defaults even when disabled
+            self.es_patience = None
+            self.es_metric = 'val_loss'  # Default for tracking best model
+            self.es_mode = 'min'
+            self.es_counter = 0
+            self.best_metric_value = float('inf')
+            if self.rank == 0:
+                print("Early stopping disabled")
 
         # Move model to the correct device and wrap with DDP
         self.model.to(self.device)
@@ -61,17 +68,17 @@ class Trainer:
         self.optimizer = AdamW(
             self.model.parameters(),
             lr=lr,
-            weight_decay=self.config['training'].get('weight_decay', 0.01)
+            weight_decay=self.config['training']['weight_decay']
         )
         
         # Num steps is now per-epoch, as scheduler steps once per batch
         num_training_steps_per_epoch = len(self.train_loader)
         num_training_steps = num_training_steps_per_epoch * self.config['training']['epochs']
 
+        # Use custom get_scheduler from scheduler_utils (no warmup)
         self.scheduler = get_scheduler(
             name=self.config['training']['lr_scheduler_type'],
             optimizer=self.optimizer,
-            num_warmup_steps=self.config['training']['warmup_steps'],
             num_training_steps=num_training_steps
         )
 
@@ -88,9 +95,12 @@ class Trainer:
             B = images.shape[0]
 
             # Initialize recursive states (y, z)
-            # We use randn, (B, 128) is the feature dim from the model
-            output_embed = torch.randn(B, 128, device=self.device)
-            latent_embed = torch.randn(B, 128, device=self.device)
+            if self.config['recursion']['init_strategy'] == "zeros":
+                output_embed = torch.zeros(B, self.model.module.STATE_DIM, device=self.device)
+                latent_embed = torch.zeros(B, self.model.module.STATE_DIM, device=self.device)
+            elif self.config['recursion']['init_strategy'] == "random":
+                output_embed = torch.randn(B, self.model.module.STATE_DIM, device=self.device)
+                latent_embed = torch.randn(B, self.model.module.STATE_DIM, device=self.device)
             
             batch_total_loss = 0.0
 
@@ -104,7 +114,7 @@ class Trainer:
 
                 # Call the model's recursive function
                 # We must call .module. to bypass the DDP wrapper
-                output_embed, latent_embed, logits = self.model.module.deep_recursion( # <-- CHANGED
+                output_embed, latent_embed, logits = self.model.module.deep_recursion(
                     images, 
                     output_embed_detached, 
                     latent_embed_detached,
@@ -115,10 +125,8 @@ class Trainer:
                 # 1. Classification Loss (y_hat vs y_true)
                 class_loss = self.classification_criterion(logits, labels)
                 
-                # 2. Quality Loss (q_hat vs (y_hat == y_true)) <-- SECTION REMOVED
-                
                 # Total loss for this step
-                step_loss = class_loss # + self.quality_weight * quality_loss <-- CHANGED
+                step_loss = class_loss
                 
                 # Backward pass *per step*
                 step_loss.backward()
@@ -183,8 +191,14 @@ class Trainer:
         return avg_loss, accuracy
 
     def train(self):
-        # ... (This function is identical to the previous version) ...
         epochs = self.config['training']['epochs']
+        
+        # Progress bar for overall training (only rank 0)
+        progress_bar = tqdm(
+            total=epochs,
+            desc="Overall Training Progress",
+            disable=(self.rank != 0)
+        )
         
         for epoch in range(epochs):
             self.train_loader.sampler.set_epoch(epoch)
@@ -196,22 +210,31 @@ class Trainer:
             if self.rank == 0:
                 print(f"Epoch {epoch+1}/{epochs} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_accuracy:.4f}")
                 
-                # Checkpointing
+                # Checkpointing - always check for best model
                 is_best = self.check_best_metric(val_loss, val_accuracy)
                 if is_best:
                     print(f"New best metric achieved. Saving model to {self.best_model_path}")
                     self.save_best_model()
-                    self.es_counter = 0 # Reset early stopping counter
+                    if self.early_stopping_enabled:
+                        self.es_counter = 0 # Reset early stopping counter
                 else:
-                    if self.early_stop_config.get('enabled', False):
+                    if self.early_stopping_enabled:
                         self.es_counter += 1
                         print(f"No improvement. Early stopping patience: {self.es_counter}/{self.es_patience}")
+                
+                # Update progress bar
+                progress_bar.update(1)
+                progress_bar.set_postfix({
+                    'train_loss': f'{train_loss:.4f}',
+                    'val_loss': f'{val_loss:.4f}',
+                    'val_acc': f'{val_accuracy:.4f}'
+                })
                 
             # Synchronize all processes before checking early stopping
             dist.barrier()
 
-            # Broadcast early stopping decision from rank 0
-            if self.early_stop_config.get('enabled', False):
+            # Broadcast early stopping decision from rank 0 (only if enabled)
+            if self.early_stopping_enabled:
                 stop_signal = torch.tensor([0], dtype=torch.long, device=self.device)
                 if self.rank == 0:
                     if self.es_counter >= self.es_patience:
@@ -222,16 +245,21 @@ class Trainer:
                 if stop_signal.item() == 1:
                     if self.rank == 0:
                         print(f"\nEarly stopping triggered after {epoch+1} epochs.")
+                        progress_bar.close()
                     break
+        
+        # Close progress bar when training completes normally
+        if self.rank == 0:
+            progress_bar.close()
 
     def check_best_metric(self, val_loss, val_accuracy):
-        # ... (This function is identical to the previous version) ...
+        """Check if current metric is the best. This is called regardless of early stopping."""
         if self.es_metric == 'val_loss':
             current_value = val_loss
         elif self.es_metric == 'val_accuracy':
             current_value = val_accuracy
         else:
-            raise ValueError(f"Unknown early stopping metric: {self.es_metric}")
+            raise ValueError(f"Unknown metric for best model tracking: {self.es_metric}")
 
         if self.es_mode == 'min':
             if current_value < self.best_metric_value:
@@ -244,7 +272,6 @@ class Trainer:
         return False
 
     def save_best_model(self):
-        # ... (This function is identical to the previous version) ...
         if self.config['saving']['save_only_on_rank_0'] and self.rank != 0:
             return
 
