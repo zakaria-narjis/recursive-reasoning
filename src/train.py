@@ -1,13 +1,13 @@
 import yaml
 import torch
 import os
-import random # Import needed for seed-fixing
-import numpy as np # Import needed for seed-fixing
+import random
+import numpy as np
 from datetime import datetime
 import torch.distributed as dist
 
 from model import SimpleCNN
-from dataset import get_dataloaders
+from dataset import get_dataloaders, get_dataset_stats
 from trainer import Trainer
 from test import test_model
 
@@ -17,13 +17,24 @@ def set_seed(seed):
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
-        # Sets the seed for the current GPU
         torch.cuda.manual_seed(seed)
-        # Sets the seed for all available GPUs
-        torch.cuda.manual_seed_all(seed) 
-        # For deterministic behavior (may impact performance)
+        torch.cuda.manual_seed_all(seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+
+def configure_model_from_dataset(config):
+    """
+    Automatically configure model parameters based on the selected dataset.
+    Updates config['model'] with the appropriate in_channels and num_classes.
+    """
+    dataset_name = config['data']['dataset_name']
+    dataset_stats = get_dataset_stats(dataset_name)
+    
+    # Update model config with dataset-specific parameters
+    config['model']['in_channels'] = dataset_stats['in_channels']
+    config['model']['num_classes'] = dataset_stats['num_classes']
+    config['model']['input_size'] = dataset_stats['input_size']
+    return config
 
 def main(config):
     """
@@ -38,6 +49,13 @@ def main(config):
     else:
         if int(os.environ["RANK"]) == 0:
             print("Warning: 'seed' key not found in config. Running without fixed seed.")
+    
+    # --- 0.5. Configure model based on dataset ---
+    config = configure_model_from_dataset(config)
+    if int(os.environ["RANK"]) == 0:
+        print(f"Dataset: {config['data']['dataset_name']}")
+        print(f"Model configured: in_channels={config['model']['in_channels']}, num_classes={config['model']['num_classes']}, input_size={config['model']['input_size']}")
+        print(f"Data augmentation: {'enabled' if config['data'].get('augmentation', True) else 'disabled'}")
             
     # --- 1. Setup DDP ---
     rank = int(os.environ["RANK"])
@@ -56,7 +74,7 @@ def main(config):
     # --- 2. Create Output Directory (Rank 0 only) ---
     output_dir = None
     if rank == 0:
-        model_name = "SimpleCNN_MNIST"
+        model_name = f"{config['model']['name']}_{config['data']['dataset_name']}"
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         experiment_name = f"{model_name}_{timestamp}"
         output_dir = os.path.join(config['saving']['base_output_dir'], experiment_name)
@@ -72,7 +90,7 @@ def main(config):
         except Exception as e:
             print(f"Warning: Could not save config file. Error: {e}")
     
-    # Broadcast output_dir to all ranks (Always execute, DDP is initialized)
+    # Broadcast output_dir to all ranks
     output_dir_list = [output_dir]
     dist.broadcast_object_list(output_dir_list, src=0)
     output_dir = output_dir_list[0]
@@ -83,25 +101,24 @@ def main(config):
     # --- 3. Load Model ---
     if rank == 0:
         print("Loading model...")
-    # NOTE: Model initialization is NOT usually seeded to ensure weights are the same across DDP ranks.
-    # However, since you are using DDP and model is replicated after loading,
-    # the initial weights will be identical because the seed is fixed.
+    
     model_config = config['model']
     model = SimpleCNN(
-        in_channels=model_config['in_channels'],
-        num_classes=model_config['num_classes']
+            in_channels=model_config['in_channels'],
+            num_classes=model_config['num_classes'],
+            input_size=model_config['input_size'],
     )
-    # Model is moved to device inside Trainer
+    
     if rank == 0:
         total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         print(f"Model created. Trainable parameters: {total_params:,}")
 
-
     # --- 4. Load Data ---
     if rank == 0:
         print("Loading datasets...")
-    # get_dataloaders will now safely call dist.barrier() as DDP is initialized
+    
     train_loader, val_loader, test_loader = get_dataloaders(config, rank, world_size)
+    
     if rank == 0:
         print(f"Data loaded: {len(train_loader.dataset)} train, {len(val_loader.dataset)} val, {len(test_loader.dataset)} test")
 
@@ -117,10 +134,9 @@ def main(config):
         print("Training finished.")
 
     # --- 6. Synchronize all processes before testing ---
-    del model # Release model from trainer
+    del model
     del trainer
     torch.cuda.empty_cache()
-    # Always call barrier as DDP is initialized
     dist.barrier()
     
     # --- 7. Run Testing ---
@@ -129,14 +145,13 @@ def main(config):
     test_model(test_loader, config, output_dir, device, rank, world_size)
         
     # --- 8. Final barrier and cleanup ---
-    # Always call barrier and destroy as DDP is initialized
     dist.barrier()
     dist.destroy_process_group()
     
     if rank == 0:
         print("Experiment complete.")
 
-# CUDA_VISIBLE_DEVICES="0" torchrun --standalone --nproc_per_node=1 src/train.py
+# Run with: CUDA_VISIBLE_DEVICES="0" torchrun --standalone --nproc_per_node=1 src/train.py
 if __name__ == "__main__":
     # Load configuration
     config_path = "config/config.yaml"
@@ -147,5 +162,4 @@ if __name__ == "__main__":
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
 
-    # Assuming 'seed' is present in the loaded config, e.g., config['seed'] = 42
     main(config)

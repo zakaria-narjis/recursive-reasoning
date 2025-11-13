@@ -27,7 +27,8 @@ def test_model(test_loader, config, output_dir, device, rank, world_size):
     model_config = config['model']
     model = SimpleCNN(
         in_channels=model_config['in_channels'],
-        num_classes=model_config['num_classes']
+        num_classes=model_config['num_classes'],
+        input_size=model_config['input_size'],
     )
     
     # 2. Load the saved state_dict

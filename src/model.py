@@ -5,10 +5,11 @@ import torch.nn.functional as F
 
 class SimpleCNN(nn.Module):
     """
-    A simple Convolutional Neural Network for MNIST,
+    A simple Convolutional Neural Network for image classification,
     structured for recursive reasoning experiments.
+    Now flexible to various input image sizes.
     """
-    def __init__(self, in_channels=1, num_classes=10):
+    def __init__(self, in_channels=1, num_classes=10, input_size=(28, 28)):
         super(SimpleCNN, self).__init__()
         
         # --- CONSTANT STATE DIMENSION ---
@@ -16,21 +17,25 @@ class SimpleCNN(nn.Module):
         self.STATE_DIM = 512
         
         # 1. CNN Feature Extractor 
-        # The initial part of the Embedding CNN, which outputs a feature map (B, 32, 7, 7).
+        # The initial part of the Embedding CNN, which outputs a feature map.
         self.cnn_extractor = nn.Sequential(
             nn.Conv2d(in_channels, 16, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2, padding=0), # Output: (B, 16, 14, 14)
+            nn.MaxPool2d(kernel_size=2, stride=2, padding=0), # Halves H and W
             nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2, padding=0)  # Output: (B, 32, 7, 7)
+            nn.MaxPool2d(kernel_size=2, stride=2, padding=0)  # Halves H and W again
         )
         
-        # Calculate the flattened feature size
-        self.flattened_size = 32 * 7 * 7 # 1568
+        # --- DYNAMICALLY CALCULATE FLATTENED SIZE ---
+        # We run a dummy tensor through the cnn_extractor to get the output size.
+        with torch.no_grad():
+            dummy_input = torch.zeros(1, in_channels, input_size[0], input_size[1])
+            # The .numel() method counts the total number of elements (C * H * W)
+            self.flattened_size = self.cnn_extractor(dummy_input).numel()
 
         # 2. Input Embedding Projection (Completes the Embedding CNN)
-        # Maps the 1568D flattened feature vector to the 512D input state (input_embed).
+        # Maps the dynamically calculated flattened feature vector to the 512D input state.
         self.input_embed_projection = nn.Sequential(
             nn.Flatten(),
             nn.Linear(self.flattened_size, 1024),
@@ -75,8 +80,7 @@ class SimpleCNN(nn.Module):
             output_embed = self.backbone(fused_state) # 512D -> 512D
         else :
             # If n=0, skip recursion and just return inputs
-            fused_state = input_embed + output_embed + latent_embed
-            output_embed = self.backbone(fused_state)
+            output_embed = self.backbone(input_embed)
         return output_embed, latent_embed
     
     def deep_recursion(self, raw_input, output_embed, latent_embed,n=6, T=3):

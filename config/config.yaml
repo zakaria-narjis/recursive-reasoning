@@ -1,18 +1,22 @@
 # configs/mnist_config.yaml
 
-description: "Training a recursive CNN on MNIST (digits 0-9) using a DDP framework."
+description: "Training a recursive CNN on various classification datasets using a DDP framework."
 
-seed : 42 # Random seed for reproducibility
+seed: 42 # Random seed for reproducibility
+
 # Model configuration
+# Note: in_channels and num_classes will be automatically set based on the dataset
 model:
   name: "SimpleCNN"
-  in_channels: 1
-  num_classes: 10
+  # in_channels: auto  # Will be set automatically based on dataset
+  # num_classes: auto  # Will be set automatically based on dataset
 
 # Dataset configuration
 data:
-  path: "/scratch/narjis/" # Path to download/load MNIST
-  val_split_size: 0.1 # 10% of training data for validation
+  dataset_name: "CIFAR10"  # Options: MNIST, FashionMNIST, CIFAR10, CIFAR100, SVHN, STL10, KMNIST
+  path: "/scratch/narjis/"  # Path to download/load datasets
+  val_split_size: 0.1  # 10% of training data for validation
+  augmentation: true  # Whether to apply data augmentation during training
   dataloader_workers:
     train: 4
     val: 2
@@ -20,37 +24,65 @@ data:
 
 # Recursion hyperparameters
 recursion:
-  N_supervision_steps: 1 # The outer loop for deep supervision (from pseudo-code)
-  N_latent_steps: 0      # The 'n' in latent_recursion
-  N_deep_steps: 1      # The 'T' in deep_recursion
-  init_strategy: "zeros" # "zeros" or "random", if init_strategy is zeros and N_latent_steps=1 and N_deep_steps=1, model reduces to network without recursion
+  N_supervision_steps:  1  # The outer loop for deep supervision (from pseudo-code)
+  N_latent_steps: 0  # The 'n' in latent_recursion
+  N_deep_steps: 1  # The 'T' in deep_recursion
+  init_strategy: "zeros"  # "zeros" or "random", if init_strategy is zeros and N_latent_steps=0 and N_deep_steps=1, model reduces to network without recursion
+
 # Training parameters
 training:
-  epochs: 20
-  batch_size: 64 # Per GPU batch size
+  epochs: 150
+  batch_size: 64  # Per GPU batch size
   learning_rate: 1.0e-3
   weight_decay: 0.01
-  # quality_loss_weight: 0.5 # Weight for the q_hat loss <-- REMOVED
-  scale_lr_by_world_size: true # If true, effective_lr = learning_rate * world_size
-  lr_scheduler_type: "step" # "cosine", "step", "none"
+  scale_lr_by_world_size: true  # If true, effective_lr = learning_rate * world_size
+  lr_scheduler_type: "step"  # "cosine", "step", "none"
   warmup_steps: 0
-  gradient_accumulation_steps: 1 # Note: DDP + per-step .backward() means grad_accum is complex. Keeping at 1.
+  gradient_accumulation_steps: 1  # Note: DDP + per-step .backward() means grad_accum is complex. Keeping at 1.
   early_stopping:
-    enabled: False
-    patience: 3
-    metric: "val_accuracy" # or "val_accuracy"
-    mode: "min" # "min" for loss, "max" for accuracy
+    enabled: True
+    patience: 10
+    metric: "val_accuracy"  # or "val_loss"
+    mode: "max"  # "min" for loss, "max" for accuracy
 
 # Testing (Inference) parameters
 testing:
-  Nsup: 1 # Number of supervision steps for inference
+  Nsup: 1  # Number of supervision steps for inference
 
 # Distributed Data Parallel (DDP) configuration
 ddp:
-  backend: "nccl" # 'nccl' for NVIDIA GPUs, 'gloo' for CPU
+  backend: "nccl"  # 'nccl' for NVIDIA GPUs, 'gloo' for CPU
 
 # Saving configuration
 saving:
-  base_output_dir: "./experiments" # Base directory for all experiments
+  base_output_dir: "./experiments"  # Base directory for all experiments
   save_only_on_rank_0: true
   best_model_name: "best_model.pth"
+
+# Example configurations for different datasets:
+# 
+# For CIFAR10:
+#   data:
+#     dataset_name: "CIFAR10"
+#   training:
+#     epochs: 100
+#     learning_rate: 1.0e-3
+#
+# For CIFAR100:
+#   data:
+#     dataset_name: "CIFAR100"
+#   training:
+#     epochs: 150
+#     learning_rate: 1.0e-3
+#
+# For FashionMNIST:
+#   data:
+#     dataset_name: "FashionMNIST"
+#   training:
+#     epochs: 30
+#
+# For SVHN:
+#   data:
+#     dataset_name: "SVHN"
+#   training:
+#     epochs: 50

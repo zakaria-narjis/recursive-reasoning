@@ -5,33 +5,189 @@ from torch.utils.data.distributed import DistributedSampler
 from torchvision import datasets, transforms
 import os
 
-def get_dataloaders(config, rank, world_size,seed=42):
+def get_dataset_stats(dataset_name):
     """
-    Creates training, validation, and test dataloaders for MNIST.
+    Returns normalization statistics (mean, std) and number of classes for common datasets.
     """
-    data_path = config['data']['path']
-    val_split_size = config['data']['val_split_size']
+    stats = {
+        'MNIST': {
+            'mean': (0.1307,),
+            'std': (0.3081,),
+            'num_classes': 10,
+            'in_channels': 1,
+            'input_size': (28, 28) # <--- ADDED
+        },
+        'FashionMNIST': {
+            'mean': (0.2860,),
+            'std': (0.3530,),
+            'num_classes': 10,
+            'in_channels': 1,
+            'input_size': (28, 28) # <--- ADDED
+        },
+        'CIFAR10': {
+            'mean': (0.4914, 0.4822, 0.4465),
+            'std': (0.2470, 0.2435, 0.2616),
+            'num_classes': 10,
+            'in_channels': 3,
+            'input_size': (32, 32) # <--- ADDED
+        },
+        'CIFAR100': {
+            'mean': (0.5071, 0.4867, 0.4408),
+            'std': (0.2675, 0.2565, 0.2761),
+            'num_classes': 100,
+            'in_channels': 3,
+            'input_size': (32, 32) # <--- ADDED
+        },
+        'SVHN': {
+            'mean': (0.4377, 0.4438, 0.4728),
+            'std': (0.1980, 0.2010, 0.1970),
+            'num_classes': 10,
+            'in_channels': 3,
+            'input_size': (32, 32) # <--- ADDED
+        },
+        'STL10': {
+            'mean': (0.4467, 0.4398, 0.4066),
+            'std': (0.2603, 0.2566, 0.2713),
+            'num_classes': 10,
+            'in_channels': 3,
+            'input_size': (96, 96) # <--- ADDED
+        },
+        'KMNIST': {
+            'mean': (0.1918,),
+            'std': (0.3483,),
+            'num_classes': 10,
+            'in_channels': 1,
+            'input_size': (28, 28) # <--- ADDED
+        }
+    }
+    
+    if dataset_name not in stats:
+        raise ValueError(f"Dataset {dataset_name} not supported. Available: {list(stats.keys())}")
+    
+    return stats[dataset_name]
 
-    # Define the transformations
-    transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.1307,), (0.3081,)) # MNIST mean and std
-    ])
+def get_transforms(dataset_name, augment=True):
+    """
+    Returns train and test transforms based on the dataset.
+    
+    Args:
+        dataset_name: Name of the dataset
+        augment: Whether to apply data augmentation for training
+    """
+    stats = get_dataset_stats(dataset_name)
+    mean = stats['mean']
+    std = stats['std']
+    in_channels = stats['in_channels']
+    
+    # Base transforms for grayscale datasets (MNIST, FashionMNIST, KMNIST)
+    if in_channels == 1:
+        if augment:
+            train_transform = transforms.Compose([
+                transforms.RandomAffine(degrees=15, translate=(0.1, 0.1), scale=(0.9, 1.1)),
+                transforms.RandomRotation(10),
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std)
+            ])
+        else:
+            train_transform = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std)
+            ])
+        
+        test_transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean, std)
+        ])
+    
+    # RGB datasets (CIFAR10, CIFAR100, SVHN, STL10)
+    else:
+        if augment:
+            train_transform = transforms.Compose([
+                transforms.RandomCrop(32, padding=4) if dataset_name in ['CIFAR10', 'CIFAR100'] else transforms.RandomCrop(96, padding=12) if dataset_name == 'STL10' else transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(p=0.5),
+                transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+                transforms.RandomRotation(10),
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std)
+            ])
+        else:
+            train_transform = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std)
+            ])
+        
+        test_transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean, std)
+        ])
+    
+    return train_transform, test_transform
 
-    # Download and load training data
-    # Only download on rank 0 to avoid race conditions
-    if rank == 0:
-        full_train_dataset = datasets.MNIST(
+def load_dataset(dataset_name, data_path, train, download, transform):
+    """
+    Loads the specified dataset from torchvision.
+    """
+    dataset_class = getattr(datasets, dataset_name)
+    
+    # Special handling for SVHN which uses 'split' instead of 'train'
+    if dataset_name == 'SVHN':
+        split = 'train' if train else 'test'
+        return dataset_class(
             root=data_path,
-            train=True,
-            download=True,
+            split=split,
+            download=download,
             transform=transform
         )
-        test_dataset = datasets.MNIST(
+    # Special handling for STL10
+    elif dataset_name == 'STL10':
+        split = 'train' if train else 'test'
+        return dataset_class(
             root=data_path,
+            split=split,
+            download=download,
+            transform=transform
+        )
+    else:
+        return dataset_class(
+            root=data_path,
+            train=train,
+            download=download,
+            transform=transform
+        )
+
+def get_dataloaders(config, rank, world_size, seed=42):
+    """
+    Creates training, validation, and test dataloaders for the specified dataset.
+    
+    Args:
+        config: Configuration dictionary
+        rank: Current process rank
+        world_size: Total number of processes
+        seed: Random seed for reproducibility
+    """
+    data_path = config['data']['path']
+    dataset_name = config['data']['dataset_name']
+    val_split_size = config['data']['val_split_size']
+    use_augmentation = config['data'].get('augmentation', True)
+    
+    # Get transforms
+    train_transform, test_transform = get_transforms(dataset_name, augment=use_augmentation)
+    
+    # Download and load training data (only on rank 0 to avoid race conditions)
+    if rank == 0:
+        full_train_dataset = load_dataset(
+            dataset_name=dataset_name,
+            data_path=data_path,
+            train=True,
+            download=True,
+            transform=train_transform
+        )
+        test_dataset = load_dataset(
+            dataset_name=dataset_name,
+            data_path=data_path,
             train=False,
             download=True,
-            transform=transform
+            transform=test_transform
         )
     
     # Wait for rank 0 to finish downloading
@@ -39,17 +195,19 @@ def get_dataloaders(config, rank, world_size,seed=42):
     
     # Other ranks load the downloaded data
     if rank != 0:
-        full_train_dataset = datasets.MNIST(
-            root=data_path,
+        full_train_dataset = load_dataset(
+            dataset_name=dataset_name,
+            data_path=data_path,
             train=True,
-            download=False, # Data is already downloaded by rank 0
-            transform=transform
+            download=False,
+            transform=train_transform
         )
-        test_dataset = datasets.MNIST(
-            root=data_path,
+        test_dataset = load_dataset(
+            dataset_name=dataset_name,
+            data_path=data_path,
             train=False,
-            download=False, # Data is already downloaded by rank 0
-            transform=transform
+            download=False,
+            transform=test_transform
         )
 
     # Split training data into train and validation
