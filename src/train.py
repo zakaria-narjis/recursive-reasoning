@@ -102,25 +102,26 @@ def main(config):
 
     # --- 3. Load Model ---
     if rank == 0:
-        print("Loading model...")
-    
-    model_config = config['model']
-    if model_config["name"] == "SimpleCNN":
-        model = SimpleCNN(
-                in_channels=model_config['in_channels'],
+        print("Loading model...")    
+        model_config = config['model']
+        if model_config["name"] == "SimpleCNN":
+            model = SimpleCNN(
+                    in_channels=model_config['in_channels'],
+                    num_classes=model_config['num_classes'],
+                    input_size=model_config['input_size'],
+                    recursive_mode=config['recursion']['recursive_mode'],
+            )
+        elif model_config["name"] == "ResNet":
+            model = ResNet(
                 num_classes=model_config['num_classes'],
-                input_size=model_config['input_size'],
                 recursive_mode=config['recursion']['recursive_mode'],
-        )
-    elif model_config["name"] == "ResNet":
-        model = ResNet(
-            num_classes=model_config['num_classes'],
-            recursive_mode=config['recursion']['recursive_mode'],
-            pretrained=model_config['pretrained']
-        )
-    else:
-        raise ValueError(f"Unsupported model name: {model_config['name']}")
+                pretrained=model_config['pretrained'],
+                use_precomputed_features=config['data']['use_precomputed_features']
+            )
+        else:
+            raise ValueError(f"Unsupported model name: {model_config['name']}")
     if rank == 0:
+        print(f"Using precomputed features: {config['data']['use_precomputed_features']}")
         total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         print(f"Model created. Trainable parameters: {total_params:,}")
 

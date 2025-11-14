@@ -14,7 +14,7 @@ model:
 
 # Dataset configuration
 data:
-  dataset_name: "CIFAR10"  # Options: MNIST, FashionMNIST, CIFAR10, CIFAR100, SVHN, STL10, KMNIST
+  dataset_name: "CIFAR100"  # Options: MNIST, FashionMNIST, CIFAR10, CIFAR100, SVHN, STL10, KMNIST
   path: "/scratch/narjis/"  # Path to download/load datasets
   val_split_size: 0.1  # 10% of training data for validation
   augmentation: false  # Whether to apply data augmentation during training
@@ -22,13 +22,14 @@ data:
     train: 4
     val: 2
     test: 2
-
+  use_precomputed_features: true
+  precomputed_path: "/scratch/narjis"
 # Recursion hyperparameters
 recursion:
   recursive_mode: true
-  N_supervision_steps:  16  # The outer loop for deep supervision (from pseudo-code)
-  N_latent_steps: 6  # The 'n' in latent_recursion
-  N_deep_steps: 3  # The 'T' in deep_recursion
+  N_supervision_steps:  1  # The outer loop for deep supervision (from pseudo-code) should be 1 if recursive_mode is false !!!!!
+  N_latent_steps: 1  # The 'n' in latent_recursion
+  N_deep_steps: 1  # The 'T' in deep_recursion
   init_strategy: "zeros"  # "zeros" or "random": init_strategy of latent and output embeddings
 
 # Training parameters

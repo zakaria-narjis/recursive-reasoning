@@ -162,19 +162,20 @@ class SimpleCNN(RecursiveNet):
 class ResNet(RecursiveNet):
     """
     RecursiveNet variant using ResNet-18 as the input embedding extractor.
-
-    Features:
-      - If pretrained=True: loads pretrained weights and freezes them.
-      - Automatically handles 1-channel input (duplicates to 3 channels).
-      - Resizes input to (224, 224) if pretrained.
+    ...
     """
 
-    def __init__(self, num_classes=10, pretrained=False, recursive_mode=True, state_dim=512):
+    def __init__(self, num_classes=10, pretrained=False, recursive_mode=True, state_dim=512, 
+                 use_precomputed_features=False): # <--- ADD ARG
         super().__init__(state_dim=state_dim, recursive_mode=recursive_mode)
         self.STATE_DIM = state_dim
         self.recursive_mode = recursive_mode
         self.pretrained = pretrained
+        self.use_precomputed_features = use_precomputed_features # <--- ADD LINE
 
+        if self.use_precomputed_features and not self.pretrained:
+            raise ValueError("Cannot use_precomputed_features if model is not pretrained.")
+            
         # --- Load ResNet18 backbone ---
         resnet = models.resnet18(weights="IMAGENET1K_V1" if pretrained else None)
 
@@ -189,8 +190,8 @@ class ResNet(RecursiveNet):
 
         # --- Input embedding (ResNet -> 512D) ---
         self.input_embed = nn.Sequential(
-            nn.Flatten(),               # (B, 512, 1, 1) → (B, 512)
-            nn.Linear(512, self.STATE_DIM),
+            nn.Flatten(),               # (B, 512, 1, 1) -> (B, 512)
+            nn.Linear(512, self.STATE_DIM), # <-- This input dim (512) is correct
             nn.ReLU(),
         )
 
@@ -226,25 +227,38 @@ class ResNet(RecursiveNet):
     # Embedding computation
     # -------------------------------------------------------------------------
     def get_input_embedding(self, raw_input: torch.Tensor) -> torch.Tensor:
-        """
-        Preprocess input (handle grayscale + resizing),
-        extract ResNet features, and map to 512D embedding.
-        """
-        # Handle grayscale input (B,1,H,W) → (B,3,H,W)
-        if raw_input.shape[1] == 1:
-            raw_input = raw_input.repeat(1, 3, 1, 1)
+            """
+            If self.use_precomputed_features:
+                Assumes raw_input IS the precomputed feature (B, 512, 1, 1)
+            Else:
+                Preprocess raw_input (image), extract ResNet features,
+                and map to 512D embedding.
+            """
+            # --- ADD THIS BLOCK ---
+            if self.use_precomputed_features:
+                # If features are precomputed, raw_input is (B, 512, 1, 1)
+                # We just pass it to the input_embed module.
+                input_embed = self.input_embed(raw_input)
+                return input_embed
+            # --- END OF BLOCK ---
 
-        # Resize if using pretrained backbone
-        raw_input = self.resize_transform(raw_input)
+            # --- Original logic (now in the 'else' case) ---
+            # Handle grayscale input (B,1,H,W) → (B,3,H,W)
+            if raw_input.shape[1] == 1:
+                raw_input = raw_input.repeat(1, 3, 1, 1)
 
-        # Extract features
-        if self.pretrained:
-            with torch.no_grad():
+            # Resize if using pretrained backbone
+            raw_input = self.resize_transform(raw_input)
+
+            # Extract features
+            if self.pretrained:
+                with torch.no_grad():
+                    x = self.feature_extractor(raw_input)  # (B, 512, 1, 1)
+            else:
                 x = self.feature_extractor(raw_input)  # (B, 512, 1, 1)
-        else:
-            x = self.feature_extractor(raw_input)  # (B, 512, 1, 1)
-        input_embed = self.input_embed(x)
-        return input_embed
+            
+            input_embed = self.input_embed(x)
+            return input_embed
 
     # -------------------------------------------------------------------------
     # Recursive reasoning methods

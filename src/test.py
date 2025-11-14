@@ -36,7 +36,8 @@ def test_model(test_loader, config, output_dir, device, rank, world_size):
         model = ResNet(
             num_classes=model_config['num_classes'],
             recursive_mode=config['recursion']['recursive_mode'],
-            pretrained=model_config['pretrained']
+            pretrained=model_config['pretrained'],
+            use_precomputed_features=config['data']['use_precomputed_features']
         )
     else:
         raise ValueError(f"Unsupported model name: {model_config['name']}")

@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 from typing import Dict, List, Any, Tuple
+from tqdm import tqdm # <--- Added for progress bar
 
 def set_nested_value(d: Dict, key_path: str, value: Any):
     """Set a value in a nested dictionary using dot notation."""
@@ -90,7 +91,8 @@ def generate_experiment_configs(sweep_config: Dict) -> List[Tuple[Dict, str]]:
     configs = []
     for idx, values in enumerate(itertools.product(*param_values)):
         # Create a copy of base config
-        config = yaml.safe_load(yaml.dump(base_config))
+        # Use deepcopy pattern for safety, though yaml.safe_load(yaml.dump(base_config)) also works
+        config = yaml.full_load(yaml.dump(base_config)) 
         
         # Apply sweep parameters
         param_dict = {}
@@ -112,7 +114,12 @@ def generate_experiment_configs(sweep_config: Dict) -> List[Tuple[Dict, str]]:
         exp_name_parts = []
         for param_name, value in param_dict.items():
             short_name = param_name.split('.')[-1]
-            exp_name_parts.append(f"{short_name}={value}")
+            # Convert boolean to string for name
+            if isinstance(value, bool):
+                 value_str = str(value).lower()
+            else:
+                 value_str = str(value)
+            exp_name_parts.append(f"{short_name}={value_str}")
         exp_name = "_".join(exp_name_parts)
         exp_name = f"exp_{idx:03d}_{exp_name}"
         
@@ -131,7 +138,10 @@ def save_experiment_config(config: Dict, output_dir: str, exp_name: str) -> str:
     return config_path
 
 def run_experiment(config_path: str, cuda_device: str, nproc: int = 1) -> Tuple[bool, str]:
-    """Run a single experiment using torchrun."""
+    """
+    Run a single experiment using torchrun, suppressing stdout/stderr
+    to prevent logs from cluttering the sweep output.
+    """
     cmd = [
         "torchrun",
         "--standalone",
@@ -143,10 +153,11 @@ def run_experiment(config_path: str, cuda_device: str, nproc: int = 1) -> Tuple[
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = cuda_device
     
-    print(f"Running command: {' '.join(cmd)}")
-    print(f"CUDA_VISIBLE_DEVICES={cuda_device}")
+    # print(f"Running command: {' '.join(cmd)}") # Suppressing verbose output
+    # print(f"CUDA_VISIBLE_DEVICES={cuda_device}") # Suppressing verbose output
     
     try:
+        # Redirect stdout and stderr to DEVNULL to suppress logs from src/train.py
         result = subprocess.run(
             cmd,
             env=env,
@@ -154,16 +165,19 @@ def run_experiment(config_path: str, cuda_device: str, nproc: int = 1) -> Tuple[
             text=True,
             check=True
         )
-        print(result.stdout)
-        return True, result.stdout
+        # Note: result.stdout and result.stderr are now empty/logged in a file 
+        # inside the experiment directory by the inner script if it logs correctly.
+        return True, "" # Return empty string for output as it's suppressed
     except subprocess.CalledProcessError as e:
+        # If an error occurs, print the error output for debugging
         print(f"Error running experiment:")
-        print(e.stdout)
-        print(e.stderr)
+        print(f"Stdout:\n{e.stdout}") 
+        print(f"Stderr:\n{e.stderr}")
         return False, e.stderr
 
 def collect_results(experiments_dir: str) -> pd.DataFrame:
     """Collect results from all experiments."""
+    # ... (function body remains the same as it handles post-run analysis)
     results = []
     
     for exp_dir in sorted(Path(experiments_dir).iterdir()):
@@ -173,34 +187,41 @@ def collect_results(experiments_dir: str) -> pd.DataFrame:
         # Load test results
         test_results_path = exp_dir / "test_results.json"
         if not test_results_path.exists():
-            print(f"Warning: No test_results.json found in {exp_dir}")
+            # Only print warning if it looks like an experiment directory (starts with exp_)
+            if exp_dir.name.startswith("exp_"):
+                 print(f"Warning: No test_results.json found in {exp_dir.name}")
             continue
         
         with open(test_results_path, 'r') as f:
-            test_results = json.load(f)
+            try:
+                test_results = json.load(f)
+            except json.JSONDecodeError:
+                print(f"Error: Could not decode test_results.json in {exp_dir.name}")
+                continue
         
         # Load config
         config_path = exp_dir / "config.yaml"
         if config_path.exists():
             with open(config_path, 'r') as f:
-                config = yaml.safe_load(f)
+                config = yaml.full_load(f)
             
             result = {
                 'experiment_name': exp_dir.name,
-                'dataset': config['data']['dataset_name'],
-                'recursive_mode': config['recursion']['recursive_mode'],
-                'N_supervision_steps': config['recursion']['N_supervision_steps'],
-                'N_latent_steps': config['recursion']['N_latent_steps'],
-                'N_deep_steps': config['recursion']['N_deep_steps'],
-                'test_N_supervision_steps': config['testing']['N_supervision_steps'],
-                'test_accuracy': test_results['test_accuracy'],
-                'test_loss': test_results['test_loss'],
+                'dataset': get_nested_value(config, 'data.dataset_name', 'N/A'),
+                'recursive_mode': get_nested_value(config, 'recursion.recursive_mode', 'N/A'),
+                'N_supervision_steps': get_nested_value(config, 'recursion.N_supervision_steps', 'N/A'),
+                'N_latent_steps': get_nested_value(config, 'recursion.N_latent_steps', 'N/A'),
+                'N_deep_steps': get_nested_value(config, 'recursion.N_deep_steps', 'N/A'),
+                'test_N_supervision_steps': get_nested_value(config, 'testing.N_supervision_steps', 'N/A'),
+                'test_accuracy': test_results.get('test_accuracy'),
+                'test_loss': test_results.get('test_loss'),
             }
             results.append(result)
     
     return pd.DataFrame(results)
 
 def create_visualizations(df: pd.DataFrame, output_dir: str):
+    # ... (function body remains the same, no changes needed here)
     """Create visualization plots for the multi-experiment results."""
     os.makedirs(output_dir, exist_ok=True)
     
@@ -231,17 +252,21 @@ def create_visualizations(df: pd.DataFrame, output_dir: str):
     if df['recursive_mode'].nunique() > 1:
         fig, axes = plt.subplots(1, 2, figsize=(14, 6))
         
-        for dataset in df['dataset'].unique():
-            df_dataset = df[df['dataset'] == dataset]
+        # Ensure recursive_mode is a boolean or convertible
+        df_plot = df.copy()
+        df_plot['recursive_mode'] = df_plot['recursive_mode'].astype(bool)
+        
+        for dataset in df_plot['dataset'].unique():
+            df_dataset = df_plot[df_plot['dataset'] == dataset]
             
             recursive_acc = df_dataset[df_dataset['recursive_mode'] == True]['test_accuracy'].values
             non_recursive_acc = df_dataset[df_dataset['recursive_mode'] == False]['test_accuracy'].values
             
             if len(recursive_acc) > 0 and len(non_recursive_acc) > 0:
                 axes[0].scatter([dataset]*len(recursive_acc), recursive_acc, 
-                              label=f'{dataset} (Recursive)', alpha=0.6, s=100)
+                                 label=f'{dataset} (Recursive)', alpha=0.6, s=100)
                 axes[0].scatter([dataset]*len(non_recursive_acc), non_recursive_acc, 
-                              label=f'{dataset} (Non-Recursive)', alpha=0.6, s=100, marker='x')
+                                 label=f'{dataset} (Non-Recursive)', alpha=0.6, s=100, marker='x')
         
         axes[0].set_xlabel('Dataset', fontsize=12)
         axes[0].set_ylabel('Test Accuracy', fontsize=12)
@@ -250,7 +275,7 @@ def create_visualizations(df: pd.DataFrame, output_dir: str):
         axes[0].grid(alpha=0.3)
         
         # Box plot comparison
-        df_melted = df[['recursive_mode', 'test_accuracy']].copy()
+        df_melted = df_plot[['recursive_mode', 'test_accuracy']].copy()
         df_melted['recursive_mode'] = df_melted['recursive_mode'].map({True: 'Recursive', False: 'Non-Recursive'})
         sns.boxplot(data=df_melted, x='recursive_mode', y='test_accuracy', ax=axes[1])
         axes[1].set_xlabel('Mode', fontsize=12)
@@ -338,9 +363,9 @@ def create_visualizations(df: pd.DataFrame, output_dir: str):
             if not pivot_table.empty:
                 fig, ax = plt.subplots(figsize=(10, 8))
                 sns.heatmap(pivot_table, annot=True, fmt='.4f', cmap='YlOrRd', ax=ax, 
-                           cbar_kws={'label': 'Test Accuracy'})
+                            cbar_kws={'label': 'Test Accuracy'})
                 ax.set_title(f'Accuracy Heatmap: {dataset}\n(N_supervision_steps vs N_latent_steps)', 
-                           fontsize=14, fontweight='bold')
+                            fontsize=14, fontweight='bold')
                 ax.set_xlabel('N_latent_steps', fontsize=12)
                 ax.set_ylabel('N_supervision_steps', fontsize=12)
                 
@@ -354,12 +379,12 @@ def create_visualizations(df: pd.DataFrame, output_dir: str):
     ax.axis('off')
     
     top_10 = df.nlargest(10, 'test_accuracy')[['experiment_name', 'dataset', 'recursive_mode', 
-                                                 'N_supervision_steps', 'N_latent_steps', 
-                                                 'N_deep_steps', 'test_accuracy']]
+                                                   'N_supervision_steps', 'N_latent_steps', 
+                                                   'N_deep_steps', 'test_accuracy']]
     top_10['test_accuracy'] = top_10['test_accuracy'].apply(lambda x: f'{x:.4f}')
     
     table = ax.table(cellText=top_10.values, colLabels=top_10.columns,
-                     cellLoc='center', loc='center', bbox=[0, 0, 1, 1])
+                      cellLoc='center', loc='center', bbox=[0, 0, 1, 1])
     table.auto_set_font_size(False)
     table.set_fontsize(9)
     table.scale(1, 2)
@@ -374,6 +399,7 @@ def create_visualizations(df: pd.DataFrame, output_dir: str):
     plt.close()
     
     print(f"Visualizations saved to {output_dir}")
+
 
 def main():
     parser = argparse.ArgumentParser(description="Run multiple experiments with different hyperparameters")
@@ -397,14 +423,15 @@ def main():
         exit(1)
     
     with open(args.sweep_config, 'r') as f:
-        sweep_config = yaml.safe_load(f)
+        sweep_config = yaml.full_load(f)
     
     print(f"Loaded sweep configuration from {args.sweep_config}")
     print(f"Description: {sweep_config.get('description', 'N/A')}")
     
     # Generate experiment configurations
     experiment_configs = generate_experiment_configs(sweep_config)
-    print(f"\nGenerated {len(experiment_configs)} experiment configurations")
+    num_experiments = len(experiment_configs)
+    print(f"\nGenerated {num_experiments} experiment configurations")
     
     # Create multi-experiments directory
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -424,29 +451,40 @@ def main():
     successful_experiments = []
     failed_experiments = []
     
-    for idx, (config, exp_name) in enumerate(experiment_configs):
-        print(f"\n{'='*80}")
-        print(f"Running experiment {idx+1}/{len(experiment_configs)}: {exp_name}")
-        print(f"{'='*80}")
-        
-        # Save experiment config
-        config_path = save_experiment_config(config, multi_exp_dir, exp_name)
-        
-        # Select CUDA device (round-robin)
-        cuda_device = cuda_devices[idx % len(cuda_devices)]
-        
-        # Run experiment
-        success, output = run_experiment(config_path, cuda_device, args.nproc)
-        
-        if success:
-            successful_experiments.append(exp_name)
-            print(f"✓ Experiment {exp_name} completed successfully")
-        else:
-            failed_experiments.append(exp_name)
-            print(f"✗ Experiment {exp_name} failed")
-            if not continue_on_error:
-                print("Stopping due to experiment failure (continue_on_error=False)")
-                break
+    # Initialize progress bar for the main process (rank 0)
+    # The progress bar is only needed in the main script running the sweep.
+    # We use dynamic description to show the current experiment being run.
+    with tqdm(total=num_experiments, desc="Total Sweep Progress", unit="exp") as pbar:
+        for idx, (config, exp_name) in enumerate(experiment_configs):
+            
+            # Update progress bar description to show current experiment
+            pbar.set_description(f"Sweep Progress (Running: {exp_name})")
+
+            # Save experiment config
+            config_path = save_experiment_config(config, multi_exp_dir, exp_name)
+            
+            # Select CUDA device (round-robin)
+            cuda_device = cuda_devices[idx % len(cuda_devices)]
+            
+            # Run experiment
+            # The run_experiment function now suppresses logs
+            success, output = run_experiment(config_path, cuda_device, args.nproc)
+            
+            if success:
+                successful_experiments.append(exp_name)
+            else:
+                failed_experiments.append(exp_name)
+                # Print error details (already done in run_experiment, but good to mark the failure here)
+                print(f"✗ Experiment {exp_name} failed. Check error output above.")
+                if not continue_on_error:
+                    print("Stopping due to experiment failure (continue_on_error=False)")
+                    break
+            
+            # Update progress bar
+            pbar.update(1)
+
+        # Reset progress bar description after loop finishes
+        pbar.set_description("Sweep Progress (Completed)")
     
     # Collect and analyze results
     print(f"\n{'='*80}")
@@ -462,9 +500,14 @@ def main():
     
     # Collect results from experiments directory
     experiments_base_dir = sweep_config.get('base_config', 'config/config.yaml')
-    with open(experiments_base_dir, 'r') as f:
-        base_config = yaml.safe_load(f)
-    experiments_dir = base_config['saving']['base_output_dir']
+    try:
+        with open(experiments_base_dir, 'r') as f:
+            base_config = yaml.safe_load(f)
+        experiments_dir = base_config['saving']['base_output_dir']
+    except Exception as e:
+        print(f"Could not load base config to find results directory: {e}")
+        return
+
     
     print(f"\nCollecting results from {experiments_dir}...")
     df = collect_results(experiments_dir)
@@ -497,7 +540,7 @@ def main():
         # Save summary
         summary = {
             'timestamp': timestamp,
-            'total_experiments': len(experiment_configs),
+            'total_experiments': num_experiments,
             'successful_experiments': len(successful_experiments),
             'failed_experiments': len(failed_experiments),
             'best_accuracy': float(df['test_accuracy'].max()),
@@ -509,7 +552,7 @@ def main():
         with open(os.path.join(multi_exp_dir, "summary.json"), 'w') as f:
             json.dump(summary, f, indent=2)
     else:
-        print("No results collected. Check if experiments completed successfully.")
+        print("No results collected. Check if experiments completed successfully and saved 'test_results.json'.")
     
     print(f"\nAll results saved to: {multi_exp_dir}")
 

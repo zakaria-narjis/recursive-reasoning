@@ -6,12 +6,12 @@ base_config: "config/config.yaml"
 
 # The parameters to sweep over
 sweep:
-  data.dataset_name: ["CIFAR10", "CIFAR100"]
+  data.dataset_name: ["CIFAR100"]
   recursion.recursive_mode: [true, false]
   recursion.N_supervision_steps: [1, 3, 6]
   recursion.N_latent_steps: [1, 3, 6]
   recursion.N_deep_steps: [1, 2, 3]
-  testing.N_supervision_steps: [1, 3, 6]
+  testing.N_supervision_steps: [1, 3]
 
 # Optional: constraints to reduce number of experiments
 # For example, only run certain combinations

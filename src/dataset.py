@@ -1,6 +1,6 @@
 # src/dataset.py
 import torch
-from torch.utils.data import DataLoader, random_split, Subset
+from torch.utils.data import DataLoader, random_split, Subset, Dataset
 from torch.utils.data.distributed import DistributedSampler
 from torchvision import datasets, transforms
 import os
@@ -155,6 +155,31 @@ def load_dataset(dataset_name, data_path, train, download, transform):
             transform=transform
         )
 
+# =================================================================
+# === THIS CLASS IS UNCHANGED ===
+# =================================================================
+class PrecomputedFeatureDataset(Dataset):
+    """
+    A dataset class that loads precomputed features and labels from a .pt file.
+    """
+    def __init__(self, file_path, rank=0):
+        if rank == 0:
+            print(f"Loading precomputed data from {file_path}...")
+        data = torch.load(file_path, map_location='cpu') # Load on CPU to save GPU memory
+        self.features = data['features']
+        self.labels = data['labels']
+        if rank == 0:
+            print(f"Loaded {len(self.labels)} samples.")
+
+    def __len__(self):
+        return len(self.labels)
+
+    def __getitem__(self, idx):
+        # Return precomputed feature and its label
+        return self.features[idx], self.labels[idx]
+# =================================================================
+
+
 def get_dataloaders(config, rank, world_size, seed=42):
     """
     Creates training, validation, and test dataloaders for the specified dataset.
@@ -170,45 +195,86 @@ def get_dataloaders(config, rank, world_size, seed=42):
     val_split_size = config['data']['val_split_size']
     use_augmentation = config['data'].get('augmentation', True)
     
-    # Get transforms
-    train_transform, test_transform = get_transforms(dataset_name, augment=use_augmentation)
+    # --- Check for precomputed feature usage ---
+    use_precomputed = config['data'].get('use_precomputed_features', False)
     
-    # Download and load training data (only on rank 0 to avoid race conditions)
-    if rank == 0:
-        full_train_dataset = load_dataset(
-            dataset_name=dataset_name,
-            data_path=data_path,
-            train=True,
-            download=True,
-            transform=train_transform
-        )
-        test_dataset = load_dataset(
-            dataset_name=dataset_name,
-            data_path=data_path,
-            train=False,
-            download=True,
-            transform=test_transform
-        )
-    
-    # Wait for rank 0 to finish downloading
-    torch.distributed.barrier()
-    
-    # Other ranks load the downloaded data
-    if rank != 0:
-        full_train_dataset = load_dataset(
-            dataset_name=dataset_name,
-            data_path=data_path,
-            train=True,
-            download=False,
-            transform=train_transform
-        )
-        test_dataset = load_dataset(
-            dataset_name=dataset_name,
-            data_path=data_path,
-            train=False,
-            download=False,
-            transform=test_transform
-        )
+    # --- THIS IS THE FIX ---
+    # Get the base path from config, default to 'scratch/narjis'
+    base_path = config['data'].get('precomputed_path', 'scratch/narjis') 
+    # --- END OF FIX ---
+
+    if use_precomputed:
+        if config['model']['name'] != 'ResNet' or not config['model']['pretrained']:
+            if rank == 0:
+                raise ValueError("use_precomputed_features is True, but model is not 'ResNet' with 'pretrained=True'")
+        
+        # --- THIS IS THE FIX ---
+        # Construct the full path to the embedding directory
+        # e.g., scratch/narjis/CIFAR10/precomputed embeding
+        embedding_dir = os.path.join(base_path, dataset_name, "precomputed_embeding")
+
+        if rank == 0:
+            print(f"Using precomputed features from: {embedding_dir}")
+        
+        # Construct the full file paths
+        train_file = os.path.join(embedding_dir, "train.pt")
+        test_file = os.path.join(embedding_dir, "test.pt")
+        # --- END OF FIX ---
+
+        if not os.path.exists(train_file) or not os.path.exists(test_file):
+            # This error message will now show the correct path
+            raise FileNotFoundError(f"Precomputed files not found at {embedding_dir}. Run src/precompute.py first.")
+        
+        # All ranks load directly from the files
+        full_train_dataset = PrecomputedFeatureDataset(train_file, rank)
+        test_dataset = PrecomputedFeatureDataset(test_file, rank)
+        
+        # NOTE: Augmentation is skipped when using precomputed features.
+        if use_augmentation and rank == 0:
+            print("Warning: Data augmentation is disabled when using precomputed features.")
+
+    else:
+        # --- Original logic for loading raw images ---
+        if rank == 0:
+            print("Loading raw image data...")
+        train_transform, test_transform = get_transforms(dataset_name, augment=use_augmentation)
+        
+        # Download and load training data (only on rank 0)
+        if rank == 0:
+            full_train_dataset = load_dataset(
+                dataset_name=dataset_name,
+                data_path=data_path,
+                train=True,
+                download=True,
+                transform=train_transform
+            )
+            test_dataset = load_dataset(
+                dataset_name=dataset_name,
+                data_path=data_path,
+                train=False,
+                download=True,
+                transform=test_transform
+            )
+        
+        # Wait for rank 0 to finish downloading
+        torch.distributed.barrier()
+        
+        # Other ranks load the downloaded data
+        if rank != 0:
+            full_train_dataset = load_dataset(
+                dataset_name=dataset_name,
+                data_path=data_path,
+                train=True,
+                download=False,
+                transform=train_transform
+            )
+            test_dataset = load_dataset(
+                dataset_name=dataset_name,
+                data_path=data_path,
+                train=False,
+                download=False,
+                transform=test_transform
+            )
 
     # Split training data into train and validation
     dataset_size = len(full_train_dataset)
