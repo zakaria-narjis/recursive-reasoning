@@ -1,0 +1,31 @@
+# config/multi_experiments.yaml
+description: "Multi-experiment sweep over recursion hyperparameters and datasets"
+
+# Base configuration (will be overridden by sweep parameters)
+base_config: "config/config.yaml"
+
+# The parameters to sweep over
+sweep:
+  data.dataset_name: ["CIFAR10", "CIFAR100"]
+  recursion.recursive_mode: [true, false]
+  recursion.N_supervision_steps: [1, 3, 6]
+  recursion.N_latent_steps: [1, 3, 6]
+  recursion.N_deep_steps: [1, 2, 3]
+  testing.N_supervision_steps: [1, 3, 6]
+
+# Optional: constraints to reduce number of experiments
+# For example, only run certain combinations
+constraints:
+  # When recursive_mode is false, supervision steps should be 1
+  - condition: "recursion.recursive_mode == false"
+    set:
+      recursion.N_supervision_steps: 1
+      recursion.N_latent_steps: 1
+      recursion.N_deep_steps: 1
+      testing.N_supervision_steps: 1
+
+# Experiment settings
+experiment_settings:
+  max_parallel: 1  # Number of experiments to run in parallel
+  cuda_devices: ["0"]  # List of CUDA devices to use
+  continue_on_error: true  # Continue running other experiments if one fails

@@ -7,16 +7,17 @@ seed: 42 # Random seed for reproducibility
 # Model configuration
 # Note: in_channels and num_classes will be automatically set based on the dataset
 model:
-  name: "SimpleCNN"
+  name: "ResNet"  # Options: SimpleCNN, ResNet
   # in_channels: auto  # Will be set automatically based on dataset
   # num_classes: auto  # Will be set automatically based on dataset
+  pretrained: true  # Whether to use pretrained weights (if applicable)
 
 # Dataset configuration
 data:
   dataset_name: "CIFAR10"  # Options: MNIST, FashionMNIST, CIFAR10, CIFAR100, SVHN, STL10, KMNIST
   path: "/scratch/narjis/"  # Path to download/load datasets
   val_split_size: 0.1  # 10% of training data for validation
-  augmentation: true  # Whether to apply data augmentation during training
+  augmentation: false  # Whether to apply data augmentation during training
   dataloader_workers:
     train: 4
     val: 2
@@ -24,30 +25,31 @@ data:
 
 # Recursion hyperparameters
 recursion:
-  N_supervision_steps:  1  # The outer loop for deep supervision (from pseudo-code)
-  N_latent_steps: 0  # The 'n' in latent_recursion
-  N_deep_steps: 1  # The 'T' in deep_recursion
-  init_strategy: "zeros"  # "zeros" or "random", if init_strategy is zeros and N_latent_steps=0 and N_deep_steps=1, model reduces to network without recursion
+  recursive_mode: true
+  N_supervision_steps:  16  # The outer loop for deep supervision (from pseudo-code)
+  N_latent_steps: 6  # The 'n' in latent_recursion
+  N_deep_steps: 3  # The 'T' in deep_recursion
+  init_strategy: "zeros"  # "zeros" or "random": init_strategy of latent and output embeddings
 
 # Training parameters
 training:
-  epochs: 150
+  epochs: 100
   batch_size: 64  # Per GPU batch size
-  learning_rate: 1.0e-3
-  weight_decay: 0.01
+  learning_rate: 1.0e-4
+  weight_decay: 0
   scale_lr_by_world_size: true  # If true, effective_lr = learning_rate * world_size
   lr_scheduler_type: "step"  # "cosine", "step", "none"
   warmup_steps: 0
   gradient_accumulation_steps: 1  # Note: DDP + per-step .backward() means grad_accum is complex. Keeping at 1.
   early_stopping:
-    enabled: True
+    enabled: true
     patience: 10
     metric: "val_accuracy"  # or "val_loss"
     mode: "max"  # "min" for loss, "max" for accuracy
 
 # Testing (Inference) parameters
 testing:
-  Nsup: 1  # Number of supervision steps for inference
+  N_supervision_steps: 1  # Number of supervision steps for inference
 
 # Distributed Data Parallel (DDP) configuration
 ddp:

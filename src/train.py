@@ -1,12 +1,14 @@
-import yaml
+# train.py
+import yaml 
 import torch
 import os
 import random
 import numpy as np
+import argparse
 from datetime import datetime
 import torch.distributed as dist
 
-from model import SimpleCNN
+from model import SimpleCNN, ResNet
 from dataset import get_dataloaders, get_dataset_stats
 from trainer import Trainer
 from test import test_model
@@ -103,12 +105,21 @@ def main(config):
         print("Loading model...")
     
     model_config = config['model']
-    model = SimpleCNN(
-            in_channels=model_config['in_channels'],
+    if model_config["name"] == "SimpleCNN":
+        model = SimpleCNN(
+                in_channels=model_config['in_channels'],
+                num_classes=model_config['num_classes'],
+                input_size=model_config['input_size'],
+                recursive_mode=config['recursion']['recursive_mode'],
+        )
+    elif model_config["name"] == "ResNet":
+        model = ResNet(
             num_classes=model_config['num_classes'],
-            input_size=model_config['input_size'],
-    )
-    
+            recursive_mode=config['recursion']['recursive_mode'],
+            pretrained=model_config['pretrained']
+        )
+    else:
+        raise ValueError(f"Unsupported model name: {model_config['name']}")
     if rank == 0:
         total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         print(f"Model created. Trainable parameters: {total_params:,}")
@@ -151,10 +162,20 @@ def main(config):
     if rank == 0:
         print("Experiment complete.")
 
-# Run with: CUDA_VISIBLE_DEVICES="0" torchrun --standalone --nproc_per_node=1 src/train.py
+# Run with: CUDA_VISIBLE_DEVICES="0" torchrun --standalone --nproc_per_node=1 src/train.py --config config/config.yaml
 if __name__ == "__main__":
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="Train a model with specified configuration")
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="config/config.yaml",
+        help="Path to the configuration YAML file (default: config/config.yaml)"
+    )
+    args = parser.parse_args()
+    
     # Load configuration
-    config_path = "config/config.yaml"
+    config_path = args.config
     if not os.path.exists(config_path):
         print(f"Error: Config file not found at {config_path}")
         exit(1)

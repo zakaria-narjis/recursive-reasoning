@@ -8,7 +8,7 @@ import os
 import json
 
 # We need to import the model definition to instantiate it
-from model import SimpleCNN
+from model import SimpleCNN, ResNet
 
 @torch.no_grad()
 def test_model(test_loader, config, output_dir, device, rank, world_size):
@@ -25,13 +25,22 @@ def test_model(test_loader, config, output_dir, device, rank, world_size):
 
     # 1. Instantiate the model on the correct device
     model_config = config['model']
-    model = SimpleCNN(
-        in_channels=model_config['in_channels'],
-        num_classes=model_config['num_classes'],
-        input_size=model_config['input_size'],
-    )
+    if model_config["name"] == "SimpleCNN":
+        model = SimpleCNN(
+            in_channels=model_config['in_channels'],
+            num_classes=model_config['num_classes'],
+            input_size=model_config['input_size'],
+            recursive_mode=config['recursion']['recursive_mode'],
+        )
+    elif model_config["name"] == "ResNet":
+        model = ResNet(
+            num_classes=model_config['num_classes'],
+            recursive_mode=config['recursion']['recursive_mode'],
+            pretrained=model_config['pretrained']
+        )
+    else:
+        raise ValueError(f"Unsupported model name: {model_config['name']}")
     
-    # 2. Load the saved state_dict
     map_location = {'cuda:%d' % 0: 'cuda:%d' % rank} if 'cuda' in device.type else device
     model.load_state_dict(torch.load(best_model_path, map_location=map_location))
     model.to(device)
@@ -45,7 +54,7 @@ def test_model(test_loader, config, output_dir, device, rank, world_size):
     criterion = nn.CrossEntropyLoss().to(device)
 
     # Get inference hyperparameters
-    Nsup_test = config.get('testing', {}).get('Nsup', 10)
+    Nsup_test = config["testing"]["N_supervision_steps"]
     n_latent = config['recursion']['N_latent_steps']
     if rank == 0:
         print(f"Running inference with Nsup={Nsup_test}, n_latent={n_latent}")
@@ -67,7 +76,7 @@ def test_model(test_loader, config, output_dir, device, rank, world_size):
         # Call the inference-only forward method
         # No .module. needed here as we are in no_grad() and .eval()
         # but it's safer to call .module. to be consistent
-        outputs = model.module.forward(images, Nsup=Nsup_test, n_latent=n_latent)
+        outputs = model.module.forward(images, Nsup=Nsup_test, n_latent=n_latent, init_strategy=config['recursion']['init_strategy'])
         # --- END MODIFICATION ---
         
         loss = criterion(outputs, labels)

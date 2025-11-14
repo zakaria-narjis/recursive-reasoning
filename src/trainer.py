@@ -28,7 +28,7 @@ class Trainer:
         self.N_supervision = self.config['recursion']['N_supervision_steps']
         self.N_latent = self.config['recursion']['N_latent_steps']
         self.N_deep = self.config['recursion']['N_deep_steps']
-        self.Nsup_inference = self.config['testing']['Nsup']
+        self.Nsup_inference = self.config['testing']['N_supervision_steps']
 
         # Early stopping setup - ALWAYS initialize these attributes
         self.early_stop_config = self.config['training']['early_stopping']
