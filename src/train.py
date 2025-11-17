@@ -84,6 +84,16 @@ def main(config):
         config['saving']['output_dir'] = output_dir
         os.makedirs(output_dir, exist_ok=True)
         
+        # handling recursive parameters
+        config['recursion']['N_supervision_steps'] = config['recursion']['N_supervision_steps'] if config['recursion']['recursive_mode'] else 1
+        config['recursion']['N_latent_steps'] = config['recursion']['N_latent_steps'] if config['recursion']['recursive_mode'] else 1
+        config['recursion']['N_deep_steps'] = config['recursion']['N_deep_steps'] if config['recursion']['recursive_mode'] else 1
+        config['recursion']['init_strategy'] = config['recursion']['init_strategy'] if config['recursion']['recursive_mode'] else "zeros"
+        print(f"Recursive mode: {config['recursion']['recursive_mode']}"
+              f" | N_supervision: {config['recursion']['N_supervision_steps']}"
+              f" | N_latent: {config['recursion']['N_latent_steps']}"
+              f" | N_deep: {config['recursion']['N_deep_steps']}"
+              f" | Init strategy: {config['recursion']['init_strategy']}")
         # Save the config file for reproducibility
         try:
             with open(os.path.join(output_dir, "config.yaml"), 'w') as f:

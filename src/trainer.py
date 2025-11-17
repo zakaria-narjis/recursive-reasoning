@@ -25,10 +25,9 @@ class Trainer:
         self.classification_criterion = nn.CrossEntropyLoss().to(self.device)
 
         # Recursion HParams
-        self.N_supervision = self.config['recursion']['N_supervision_steps']
+        self.N_supervision = self.config['recursion']['N_supervision_steps'] if self.config['recursion']['recursive_mode'] else 1
         self.N_latent = self.config['recursion']['N_latent_steps']
         self.N_deep = self.config['recursion']['N_deep_steps']
-        self.Nsup_inference = self.config['testing']['N_supervision_steps']
 
         # Early stopping setup - ALWAYS initialize these attributes
         self.early_stop_config = self.config['training']['early_stopping']
@@ -166,7 +165,7 @@ class Trainer:
             # We must call .module. to bypass the DDP wrapper
             outputs = self.model.module.forward(
                 images, 
-                Nsup=self.Nsup_inference, 
+                Nsup=self.N_supervision, 
                 n_latent=self.N_latent
             )
             

@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 from typing import Dict, List, Any, Tuple
-from tqdm import tqdm # <--- Added for progress bar
+from tqdm import tqdm
 
 def set_nested_value(d: Dict, key_path: str, value: Any):
     """Set a value in a nested dictionary using dot notation."""
@@ -91,7 +91,6 @@ def generate_experiment_configs(sweep_config: Dict) -> List[Tuple[Dict, str]]:
     configs = []
     for idx, values in enumerate(itertools.product(*param_values)):
         # Create a copy of base config
-        # Use deepcopy pattern for safety, though yaml.safe_load(yaml.dump(base_config)) also works
         config = yaml.full_load(yaml.dump(base_config)) 
         
         # Apply sweep parameters
@@ -109,6 +108,13 @@ def generate_experiment_configs(sweep_config: Dict) -> List[Tuple[Dict, str]]:
                 if 'set' in constraint:
                     for key_path, value in constraint['set'].items():
                         param_dict[key_path] = value
+        
+        # Apply global testing configuration
+        if 'testing' in sweep_config:
+            testing_config = sweep_config['testing']
+            if 'testing' not in config:
+                config['testing'] = {}
+            config['testing'].update(testing_config)
         
         # Generate experiment name
         exp_name_parts = []
@@ -153,9 +159,6 @@ def run_experiment(config_path: str, cuda_device: str, nproc: int = 1) -> Tuple[
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = cuda_device
     
-    # print(f"Running command: {' '.join(cmd)}") # Suppressing verbose output
-    # print(f"CUDA_VISIBLE_DEVICES={cuda_device}") # Suppressing verbose output
-    
     try:
         # Redirect stdout and stderr to DEVNULL to suppress logs from src/train.py
         result = subprocess.run(
@@ -165,9 +168,7 @@ def run_experiment(config_path: str, cuda_device: str, nproc: int = 1) -> Tuple[
             text=True,
             check=True
         )
-        # Note: result.stdout and result.stderr are now empty/logged in a file 
-        # inside the experiment directory by the inner script if it logs correctly.
-        return True, "" # Return empty string for output as it's suppressed
+        return True, ""
     except subprocess.CalledProcessError as e:
         # If an error occurs, print the error output for debugging
         print(f"Error running experiment:")
@@ -176,8 +177,10 @@ def run_experiment(config_path: str, cuda_device: str, nproc: int = 1) -> Tuple[
         return False, e.stderr
 
 def collect_results(experiments_dir: str) -> pd.DataFrame:
-    """Collect results from all experiments."""
-    # ... (function body remains the same as it handles post-run analysis)
+    """
+    Collect results from all experiments.
+    Now handles multiple N_supervision test results per experiment.
+    """
     results = []
     
     for exp_dir in sorted(Path(experiments_dir).iterdir()):
@@ -187,7 +190,7 @@ def collect_results(experiments_dir: str) -> pd.DataFrame:
         # Load test results
         test_results_path = exp_dir / "test_results.json"
         if not test_results_path.exists():
-            # Only print warning if it looks like an experiment directory (starts with exp_)
+            # Only print warning if it looks like an experiment directory
             if exp_dir.name.startswith("exp_"):
                  print(f"Warning: No test_results.json found in {exp_dir.name}")
             continue
@@ -201,10 +204,32 @@ def collect_results(experiments_dir: str) -> pd.DataFrame:
         
         # Load config
         config_path = exp_dir / "config.yaml"
-        if config_path.exists():
-            with open(config_path, 'r') as f:
-                config = yaml.full_load(f)
+        if not config_path.exists():
+            continue
             
+        with open(config_path, 'r') as f:
+            config = yaml.full_load(f)
+        
+        # Check if this is the new format with multiple N_supervision results
+        if 'results_by_Nsup' in test_results:
+            # New format: multiple N_supervision results
+            metadata = test_results.get('metadata', {})
+            
+            for nsup_key, nsup_results in test_results['results_by_Nsup'].items():
+                result = {
+                    'experiment_name': exp_dir.name,
+                    'dataset': get_nested_value(config, 'data.dataset_name', 'N/A'),
+                    'recursive_mode': get_nested_value(config, 'recursion.recursive_mode', 'N/A'),
+                    'N_supervision_steps': get_nested_value(config, 'recursion.N_supervision_steps', 'N/A'),
+                    'N_latent_steps': get_nested_value(config, 'recursion.N_latent_steps', 'N/A'),
+                    'N_deep_steps': get_nested_value(config, 'recursion.N_deep_steps', 'N/A'),
+                    'test_N_supervision_steps': nsup_results['N_supervision_steps'],
+                    'test_accuracy': nsup_results['test_accuracy'],
+                    'test_loss': nsup_results['test_loss'],
+                }
+                results.append(result)
+        else:
+            # Old format: single result (backward compatibility)
             result = {
                 'experiment_name': exp_dir.name,
                 'dataset': get_nested_value(config, 'data.dataset_name', 'N/A'),
@@ -212,7 +237,7 @@ def collect_results(experiments_dir: str) -> pd.DataFrame:
                 'N_supervision_steps': get_nested_value(config, 'recursion.N_supervision_steps', 'N/A'),
                 'N_latent_steps': get_nested_value(config, 'recursion.N_latent_steps', 'N/A'),
                 'N_deep_steps': get_nested_value(config, 'recursion.N_deep_steps', 'N/A'),
-                'test_N_supervision_steps': get_nested_value(config, 'testing.N_supervision_steps', 'N/A'),
+                'test_N_supervision_steps': test_results.get('N_supervision_steps_used', 'N/A'),
                 'test_accuracy': test_results.get('test_accuracy'),
                 'test_loss': test_results.get('test_loss'),
             }
@@ -221,7 +246,6 @@ def collect_results(experiments_dir: str) -> pd.DataFrame:
     return pd.DataFrame(results)
 
 def create_visualizations(df: pd.DataFrame, output_dir: str):
-    # ... (function body remains the same, no changes needed here)
     """Create visualization plots for the multi-experiment results."""
     os.makedirs(output_dir, exist_ok=True)
     
@@ -248,11 +272,48 @@ def create_visualizations(df: pd.DataFrame, output_dir: str):
         plt.savefig(os.path.join(output_dir, 'accuracy_by_dataset.png'), dpi=300)
         plt.close()
     
-    # 2. Recursive vs Non-Recursive comparison
+    # 2. Test N_supervision_steps effect (NEW VISUALIZATION)
+    df_recursive = df[df['recursive_mode'] == True]
+    if len(df_recursive) > 1 and df_recursive['test_N_supervision_steps'].nunique() > 1:
+        fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+        
+        # Plot 1: Line plot showing effect across training N_supervision
+        for train_nsup in sorted(df_recursive['N_supervision_steps'].unique()):
+            df_subset = df_recursive[df_recursive['N_supervision_steps'] == train_nsup]
+            grouped = df_subset.groupby('test_N_supervision_steps')['test_accuracy'].mean()
+            axes[0].plot(grouped.index, grouped.values, marker='o', 
+                        label=f'Train Nsup={train_nsup}', linewidth=2)
+        
+        axes[0].set_xlabel('Test N_supervision_steps', fontsize=12)
+        axes[0].set_ylabel('Test Accuracy', fontsize=12)
+        axes[0].set_title('Effect of Test-Time N_supervision_steps', fontsize=14, fontweight='bold')
+        axes[0].legend()
+        axes[0].grid(alpha=0.3)
+        
+        # Plot 2: Heatmap of train vs test N_supervision
+        pivot_table = df_recursive.pivot_table(
+            values='test_accuracy',
+            index='N_supervision_steps',
+            columns='test_N_supervision_steps',
+            aggfunc='mean'
+        )
+        
+        if not pivot_table.empty:
+            sns.heatmap(pivot_table, annot=True, fmt='.4f', cmap='YlOrRd', ax=axes[1],
+                       cbar_kws={'label': 'Test Accuracy'})
+            axes[1].set_title('Train vs Test N_supervision_steps Heatmap', 
+                            fontsize=14, fontweight='bold')
+            axes[1].set_xlabel('Test N_supervision_steps', fontsize=12)
+            axes[1].set_ylabel('Train N_supervision_steps', fontsize=12)
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, 'test_supervision_effect.png'), dpi=300)
+        plt.close()
+    
+    # 3. Recursive vs Non-Recursive comparison
     if df['recursive_mode'].nunique() > 1:
         fig, axes = plt.subplots(1, 2, figsize=(14, 6))
         
-        # Ensure recursive_mode is a boolean or convertible
         df_plot = df.copy()
         df_plot['recursive_mode'] = df_plot['recursive_mode'].astype(bool)
         
@@ -286,22 +347,20 @@ def create_visualizations(df: pd.DataFrame, output_dir: str):
         plt.savefig(os.path.join(output_dir, 'recursive_comparison.png'), dpi=300)
         plt.close()
     
-    # 3. Hyperparameter effects (for recursive mode only)
-    df_recursive = df[df['recursive_mode'] == True]
-    
+    # 4. Hyperparameter effects (for recursive mode only)
     if len(df_recursive) > 1:
         fig, axes = plt.subplots(2, 2, figsize=(16, 12))
         
-        # N_supervision_steps effect
+        # N_supervision_steps effect (training time)
         if df_recursive['N_supervision_steps'].nunique() > 1:
             for dataset in df_recursive['dataset'].unique():
                 df_dataset = df_recursive[df_recursive['dataset'] == dataset]
                 grouped = df_dataset.groupby('N_supervision_steps')['test_accuracy'].mean()
                 axes[0, 0].plot(grouped.index, grouped.values, marker='o', label=dataset, linewidth=2)
             
-            axes[0, 0].set_xlabel('N_supervision_steps', fontsize=12)
+            axes[0, 0].set_xlabel('N_supervision_steps (Training)', fontsize=12)
             axes[0, 0].set_ylabel('Test Accuracy', fontsize=12)
-            axes[0, 0].set_title('Effect of N_supervision_steps', fontsize=14, fontweight='bold')
+            axes[0, 0].set_title('Effect of Training N_supervision_steps', fontsize=14, fontweight='bold')
             axes[0, 0].legend()
             axes[0, 0].grid(alpha=0.3)
         
@@ -331,16 +390,18 @@ def create_visualizations(df: pd.DataFrame, output_dir: str):
             axes[1, 0].legend()
             axes[1, 0].grid(alpha=0.3)
         
-        # Test N_supervision_steps effect
+        # Test N_supervision_steps effect (clearer version)
         if df_recursive['test_N_supervision_steps'].nunique() > 1:
-            for dataset in df_recursive['dataset'].unique():
-                df_dataset = df_recursive[df_recursive['dataset'] == dataset]
-                grouped = df_dataset.groupby('test_N_supervision_steps')['test_accuracy'].mean()
-                axes[1, 1].plot(grouped.index, grouped.values, marker='o', label=dataset, linewidth=2)
+            # Show best test Nsup for each training configuration
+            best_test_nsup = df_recursive.groupby(['N_supervision_steps', 'N_latent_steps'])['test_accuracy'].max()
+            avg_by_train_nsup = df_recursive.groupby('N_supervision_steps')['test_accuracy'].mean()
             
-            axes[1, 1].set_xlabel('Test N_supervision_steps', fontsize=12)
+            axes[1, 1].plot(avg_by_train_nsup.index, avg_by_train_nsup.values, 
+                           marker='o', linewidth=2, label='Average across all test Nsup')
+            axes[1, 1].set_xlabel('Training N_supervision_steps', fontsize=12)
             axes[1, 1].set_ylabel('Test Accuracy', fontsize=12)
-            axes[1, 1].set_title('Effect of Test N_supervision_steps', fontsize=14, fontweight='bold')
+            axes[1, 1].set_title('Training N_supervision Impact on Test Performance', 
+                                fontsize=14, fontweight='bold')
             axes[1, 1].legend()
             axes[1, 1].grid(alpha=0.3)
         
@@ -348,7 +409,7 @@ def create_visualizations(df: pd.DataFrame, output_dir: str):
         plt.savefig(os.path.join(output_dir, 'hyperparameter_effects.png'), dpi=300)
         plt.close()
     
-    # 4. Heatmap of accuracy (if applicable)
+    # 5. Heatmap of accuracy (if applicable)
     if len(df_recursive) > 1 and df_recursive['N_supervision_steps'].nunique() > 1 and df_recursive['N_latent_steps'].nunique() > 1:
         for dataset in df_recursive['dataset'].unique():
             df_dataset = df_recursive[df_recursive['dataset'] == dataset]
@@ -373,20 +434,21 @@ def create_visualizations(df: pd.DataFrame, output_dir: str):
                 plt.savefig(os.path.join(output_dir, f'heatmap_{dataset}.png'), dpi=300)
                 plt.close()
     
-    # 5. Top performers table
-    fig, ax = plt.subplots(figsize=(14, 6))
+    # 6. Top performers table
+    fig, ax = plt.subplots(figsize=(16, 6))
     ax.axis('tight')
     ax.axis('off')
     
     top_10 = df.nlargest(10, 'test_accuracy')[['experiment_name', 'dataset', 'recursive_mode', 
                                                    'N_supervision_steps', 'N_latent_steps', 
-                                                   'N_deep_steps', 'test_accuracy']]
+                                                   'N_deep_steps', 'test_N_supervision_steps', 
+                                                   'test_accuracy']]
     top_10['test_accuracy'] = top_10['test_accuracy'].apply(lambda x: f'{x:.4f}')
     
     table = ax.table(cellText=top_10.values, colLabels=top_10.columns,
                       cellLoc='center', loc='center', bbox=[0, 0, 1, 1])
     table.auto_set_font_size(False)
-    table.set_fontsize(9)
+    table.set_fontsize(8)
     table.scale(1, 2)
     
     # Style header
@@ -394,7 +456,7 @@ def create_visualizations(df: pd.DataFrame, output_dir: str):
         table[(0, i)].set_facecolor('#4CAF50')
         table[(0, i)].set_text_props(weight='bold', color='white')
     
-    plt.title('Top 10 Experiments by Test Accuracy', fontsize=16, fontweight='bold', pad=20)
+    plt.title('Top 10 Results by Test Accuracy', fontsize=16, fontweight='bold', pad=20)
     plt.savefig(os.path.join(output_dir, 'top_performers.png'), dpi=300, bbox_inches='tight')
     plt.close()
     
@@ -428,6 +490,12 @@ def main():
     print(f"Loaded sweep configuration from {args.sweep_config}")
     print(f"Description: {sweep_config.get('description', 'N/A')}")
     
+    # Print testing configuration
+    if 'testing' in sweep_config:
+        test_nsup = sweep_config['testing'].get('N_supervision_steps', [])
+        print(f"Testing N_supervision_steps: {test_nsup}")
+        print(f"  (All values will be tested at inference time for each experiment)")
+    
     # Generate experiment configurations
     experiment_configs = generate_experiment_configs(sweep_config)
     num_experiments = len(experiment_configs)
@@ -451,13 +519,9 @@ def main():
     successful_experiments = []
     failed_experiments = []
     
-    # Initialize progress bar for the main process (rank 0)
-    # The progress bar is only needed in the main script running the sweep.
-    # We use dynamic description to show the current experiment being run.
     with tqdm(total=num_experiments, desc="Total Sweep Progress", unit="exp") as pbar:
         for idx, (config, exp_name) in enumerate(experiment_configs):
             
-            # Update progress bar description to show current experiment
             pbar.set_description(f"Sweep Progress (Running: {exp_name})")
 
             # Save experiment config
@@ -467,23 +531,19 @@ def main():
             cuda_device = cuda_devices[idx % len(cuda_devices)]
             
             # Run experiment
-            # The run_experiment function now suppresses logs
             success, output = run_experiment(config_path, cuda_device, args.nproc)
             
             if success:
                 successful_experiments.append(exp_name)
             else:
                 failed_experiments.append(exp_name)
-                # Print error details (already done in run_experiment, but good to mark the failure here)
                 print(f"✗ Experiment {exp_name} failed. Check error output above.")
                 if not continue_on_error:
                     print("Stopping due to experiment failure (continue_on_error=False)")
                     break
             
-            # Update progress bar
             pbar.update(1)
 
-        # Reset progress bar description after loop finishes
         pbar.set_description("Sweep Progress (Completed)")
     
     # Collect and analyze results
@@ -531,7 +591,8 @@ def main():
         print(f"Best experiment: {best_exp['experiment_name']}")
         print(f"  Dataset: {best_exp['dataset']}")
         print(f"  Recursive mode: {best_exp['recursive_mode']}")
-        print(f"  N_supervision_steps: {best_exp['N_supervision_steps']}")
+        print(f"  Training N_supervision_steps: {best_exp['N_supervision_steps']}")
+        print(f"  Test N_supervision_steps: {best_exp['test_N_supervision_steps']}")
         print(f"  N_latent_steps: {best_exp['N_latent_steps']}")
         print(f"  N_deep_steps: {best_exp['N_deep_steps']}")
         

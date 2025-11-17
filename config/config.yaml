@@ -1,6 +1,6 @@
 # configs/mnist_config.yaml
 
-description: "Training a recursive CNN on various classification datasets using a DDP framework."
+description: "Training a recursive CNN on various classification datasets using a DDP framework NOT pretrained."
 
 seed: 42 # Random seed for reproducibility
 
@@ -10,7 +10,7 @@ model:
   name: "ResNet"  # Options: SimpleCNN, ResNet
   # in_channels: auto  # Will be set automatically based on dataset
   # num_classes: auto  # Will be set automatically based on dataset
-  pretrained: true  # Whether to use pretrained weights (if applicable)
+  pretrained: false  # Whether to use pretrained weights (if applicable)
 
 # Dataset configuration
 data:
@@ -19,23 +19,23 @@ data:
   val_split_size: 0.1  # 10% of training data for validation
   augmentation: false  # Whether to apply data augmentation during training
   dataloader_workers:
-    train: 4
-    val: 2
-    test: 2
-  use_precomputed_features: true
+    train: 8
+    val: 8
+    test: 8
+  use_precomputed_features: false
   precomputed_path: "/scratch/narjis"
 # Recursion hyperparameters
 recursion:
-  recursive_mode: true
-  N_supervision_steps:  1  # The outer loop for deep supervision (from pseudo-code) should be 1 if recursive_mode is false !!!!!
-  N_latent_steps: 1  # The 'n' in latent_recursion
-  N_deep_steps: 1  # The 'T' in deep_recursion
+  recursive_mode: false
+  N_supervision_steps:  16  # The outer loop for deep supervision (from pseudo-code) should be 1 if recursive_mode is false !!!!!
+  N_latent_steps: 6  # The 'n' in latent_recursion
+  N_deep_steps: 3  # The 'T' in deep_recursion
   init_strategy: "zeros"  # "zeros" or "random": init_strategy of latent and output embeddings
 
 # Training parameters
 training:
   epochs: 100
-  batch_size: 64  # Per GPU batch size
+  batch_size: 128  # Per GPU batch size
   learning_rate: 1.0e-4
   weight_decay: 0
   scale_lr_by_world_size: true  # If true, effective_lr = learning_rate * world_size

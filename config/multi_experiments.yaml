@@ -5,13 +5,14 @@ description: "Multi-experiment sweep over recursion hyperparameters and datasets
 base_config: "config/config.yaml"
 
 # The parameters to sweep over
+# NOTE: testing.N_supervision_steps is NOT in sweep anymore
+# It will be handled at test time - all values will be tested after training
 sweep:
   data.dataset_name: ["CIFAR100"]
   recursion.recursive_mode: [true, false]
-  recursion.N_supervision_steps: [1, 3, 6]
+  recursion.N_supervision_steps: [1, 3, 6, 8]
   recursion.N_latent_steps: [1, 3, 6]
   recursion.N_deep_steps: [1, 2, 3]
-  testing.N_supervision_steps: [1, 3]
 
 # Optional: constraints to reduce number of experiments
 # For example, only run certain combinations
@@ -22,10 +23,14 @@ constraints:
       recursion.N_supervision_steps: 1
       recursion.N_latent_steps: 1
       recursion.N_deep_steps: 1
-      testing.N_supervision_steps: 1
 
 # Experiment settings
 experiment_settings:
   max_parallel: 1  # Number of experiments to run in parallel
   cuda_devices: ["0"]  # List of CUDA devices to use
   continue_on_error: true  # Continue running other experiments if one fails
+  
+# Testing configuration (applied to all experiments)
+# These values will be tested at inference time for recursive models
+testing:
+  N_supervision_steps: [1, 3, 6, 8]  # All values will be tested after training
