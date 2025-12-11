@@ -7,7 +7,7 @@ import torch.distributed as dist
 import os
 import json
 
-from model import SimpleCNN, ResNet
+from src.model import SimpleCNN, ResNet, RecursiveViT
 
 
 @torch.no_grad()
@@ -42,6 +42,25 @@ def test_model(test_loader, config, output_dir, device, rank, world_size):
             recursive_mode=config['recursion']['recursive_mode'],
             pretrained=model_config['pretrained'],
             use_precomputed_features=config['data']['use_precomputed_features']
+        )
+    elif model_config["name"] == "RecursiveViT":
+        vit_config = model_config['vit_config']
+        
+        # Handle input_size: if it's (H, W), take H
+        img_sz = model_config['input_size']
+        if isinstance(img_sz, (list, tuple)):
+            img_sz = img_sz[0]
+            
+        model = RecursiveViT(
+            image_size=img_sz,
+            patch_size=vit_config['patch_size'],
+            num_classes=model_config['num_classes'],
+            dim=vit_config['dim'],
+            depth=vit_config['depth'],
+            heads=vit_config['heads'],
+            mlp_dim=vit_config['mlp_dim'],
+            recursive_mode=config['recursion']['recursive_mode'],
+            channels=model_config['in_channels']
         )
     else:
         raise ValueError(f"Unsupported model name: {model_config['name']}")

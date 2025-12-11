@@ -8,9 +8,9 @@ import argparse
 from datetime import datetime
 import torch.distributed as dist
 
-from model import SimpleCNN, ResNet
-from dataset import get_dataloaders, get_dataset_stats
-from trainer import Trainer
+from src.model import SimpleCNN, ResNet, RecursiveViT
+from src.dataset import get_dataloaders, get_dataset_stats
+from src.trainer import Trainer
 from test import test_model
 
 def set_seed(seed):
@@ -75,6 +75,10 @@ def main(config):
 
     # --- 2. Create Output Directory (Rank 0 only) ---
     output_dir = None
+    config['recursion']['N_supervision_steps'] = config['recursion']['N_supervision_steps'] if config['recursion']['recursive_mode'] else 1
+    config['recursion']['N_latent_steps'] = config['recursion']['N_latent_steps'] if config['recursion']['recursive_mode'] else 1
+    config['recursion']['N_deep_steps'] = config['recursion']['N_deep_steps'] if config['recursion']['recursive_mode'] else 1
+    config['recursion']['init_strategy'] = config['recursion']['init_strategy'] if config['recursion']['recursive_mode'] else "zeros"
     if rank == 0:
         model_name = f"{config['model']['name']}_{config['data']['dataset_name']}"
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -84,17 +88,13 @@ def main(config):
         config['saving']['output_dir'] = output_dir
         os.makedirs(output_dir, exist_ok=True)
         
-        # handling recursive parameters
-        config['recursion']['N_supervision_steps'] = config['recursion']['N_supervision_steps'] if config['recursion']['recursive_mode'] else 1
-        config['recursion']['N_latent_steps'] = config['recursion']['N_latent_steps'] if config['recursion']['recursive_mode'] else 1
-        config['recursion']['N_deep_steps'] = config['recursion']['N_deep_steps'] if config['recursion']['recursive_mode'] else 1
-        config['recursion']['init_strategy'] = config['recursion']['init_strategy'] if config['recursion']['recursive_mode'] else "zeros"
         print(f"Recursive mode: {config['recursion']['recursive_mode']}"
               f" | N_supervision: {config['recursion']['N_supervision_steps']}"
               f" | N_latent: {config['recursion']['N_latent_steps']}"
               f" | N_deep: {config['recursion']['N_deep_steps']}"
               f" | Init strategy: {config['recursion']['init_strategy']}")
-        # Save the config file for reproducibility
+              
+        # Save the config file for reproducibility (AFTER all rank 0 changes)
         try:
             with open(os.path.join(output_dir, "config.yaml"), 'w') as f:
                 yaml.dump(config, f)
@@ -109,27 +109,46 @@ def main(config):
     
     # Update config on all ranks
     config['saving']['output_dir'] = output_dir
-
+    
     # --- 3. Load Model ---
     if rank == 0:
-        print("Loading model...")    
-        model_config = config['model']
-        if model_config["name"] == "SimpleCNN":
-            model = SimpleCNN(
-                    in_channels=model_config['in_channels'],
-                    num_classes=model_config['num_classes'],
-                    input_size=model_config['input_size'],
-                    recursive_mode=config['recursion']['recursive_mode'],
-            )
-        elif model_config["name"] == "ResNet":
-            model = ResNet(
+        print("Loading model...") 
+    model_config = config['model']
+    if model_config["name"] == "SimpleCNN":
+        model = SimpleCNN(
+                in_channels=model_config['in_channels'],
                 num_classes=model_config['num_classes'],
+                input_size=model_config['input_size'],
                 recursive_mode=config['recursion']['recursive_mode'],
-                pretrained=model_config['pretrained'],
-                use_precomputed_features=config['data']['use_precomputed_features']
-            )
-        else:
-            raise ValueError(f"Unsupported model name: {model_config['name']}")
+        )
+    elif model_config["name"] == "ResNet":
+        model = ResNet(
+            num_classes=model_config['num_classes'],
+            recursive_mode=config['recursion']['recursive_mode'],
+            pretrained=model_config['pretrained'],
+            use_precomputed_features=config['data']['use_precomputed_features']
+        )
+    elif model_config["name"] == "RecursiveViT":
+        vit_config = model_config['vit_config']
+        
+        # Handle input_size: if it's (H, W), take H
+        img_sz = model_config['input_size']
+        if isinstance(img_sz, (list, tuple)):
+            img_sz = img_sz[0]
+            
+        model = RecursiveViT(
+            image_size=img_sz,
+            patch_size=vit_config['patch_size'],
+            num_classes=model_config['num_classes'],
+            dim=vit_config['dim'],
+            depth=vit_config['depth'],
+            heads=vit_config['heads'],
+            mlp_dim=vit_config['mlp_dim'],
+            recursive_mode=config['recursion']['recursive_mode'],
+            channels=model_config['in_channels']
+        )
+    else:
+        raise ValueError(f"Unsupported model name: {model_config['name']}")
     if rank == 0:
         print(f"Using precomputed features: {config['data']['use_precomputed_features']}")
         total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
