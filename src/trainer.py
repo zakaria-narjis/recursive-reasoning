@@ -188,8 +188,10 @@ class Trainer:
             val_loss, val_accuracy = self.valid_epoch()
 
             if self.rank == 0:
-                print(f"Epoch {epoch+1}/{epochs} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_accuracy:.4f}")
-                
+                lr = self.scheduler.get_last_lr()[0]
+                print(f"Epoch {epoch+1}/{epochs} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
+                print(f"Learning Rate: {lr:.6f} | Val Accuracy: {val_accuracy:.4f}")
+                print("-" * 50)
                 is_best = self.check_best_metric(val_loss, val_accuracy)
                 if is_best:
                     print(f"New best metric achieved. Saving model to {self.best_model_path}")

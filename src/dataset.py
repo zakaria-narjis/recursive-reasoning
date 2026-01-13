@@ -15,49 +15,106 @@ def get_dataset_stats(dataset_name):
             'std': (0.3081,),
             'num_classes': 10,
             'in_channels': 1,
-            'input_size': (28, 28) # <--- ADDED
+            'input_size': (28, 28)
         },
         'FashionMNIST': {
             'mean': (0.2860,),
             'std': (0.3530,),
             'num_classes': 10,
             'in_channels': 1,
-            'input_size': (28, 28) # <--- ADDED
+            'input_size': (28, 28)
         },
         'CIFAR10': {
             'mean': (0.4914, 0.4822, 0.4465),
             'std': (0.2470, 0.2435, 0.2616),
             'num_classes': 10,
             'in_channels': 3,
-            'input_size': (32, 32) # <--- ADDED
+            'input_size': (32, 32)
         },
         'CIFAR100': {
             'mean': (0.5071, 0.4867, 0.4408),
             'std': (0.2675, 0.2565, 0.2761),
             'num_classes': 100,
             'in_channels': 3,
-            'input_size': (32, 32) # <--- ADDED
+            'input_size': (32, 32)
         },
         'SVHN': {
             'mean': (0.4377, 0.4438, 0.4728),
             'std': (0.1980, 0.2010, 0.1970),
             'num_classes': 10,
             'in_channels': 3,
-            'input_size': (32, 32) # <--- ADDED
+            'input_size': (32, 32)
         },
         'STL10': {
             'mean': (0.4467, 0.4398, 0.4066),
             'std': (0.2603, 0.2566, 0.2713),
             'num_classes': 10,
             'in_channels': 3,
-            'input_size': (96, 96) # <--- ADDED
+            'input_size': (96, 96)
         },
         'KMNIST': {
             'mean': (0.1918,),
             'std': (0.3483,),
             'num_classes': 10,
             'in_channels': 1,
-            'input_size': (28, 28) # <--- ADDED
+            'input_size': (28, 28)
+        },
+        # High-resolution datasets
+        'ImageNet': {
+            'mean': (0.485, 0.456, 0.406),
+            'std': (0.229, 0.224, 0.225),
+            'num_classes': 1000,
+            'in_channels': 3,
+            'input_size': (224, 224)  # Standard input size for pretrained models
+        },
+        'TinyImageNet': {
+            'mean': (0.485, 0.456, 0.406),
+            'std': (0.229, 0.224, 0.225),
+            'num_classes': 200,
+            'in_channels': 3,
+            'input_size': (64, 64)
+        },
+        'Caltech101': {
+            'mean': (0.485, 0.456, 0.406),
+            'std': (0.229, 0.224, 0.225),
+            'num_classes': 101,
+            'in_channels': 3,
+            'input_size': (224, 224)
+        },
+        'Caltech256': {
+            'mean': (0.485, 0.456, 0.406),
+            'std': (0.229, 0.224, 0.225),
+            'num_classes': 257,
+            'in_channels': 3,
+            'input_size': (224, 224)
+        },
+        'Food101': {
+            'mean': (0.485, 0.456, 0.406),
+            'std': (0.229, 0.224, 0.225),
+            'num_classes': 101,
+            'in_channels': 3,
+            'input_size': (224, 224)
+        },
+        'Places365': {
+            'mean': (0.485, 0.456, 0.406),
+            'std': (0.229, 0.224, 0.225),
+            'num_classes': 365,
+            'in_channels': 3,
+            'input_size': (224, 224)
+        },
+        'Flowers102': {
+            'mean': (0.485, 0.456, 0.406),
+            'std': (0.229, 0.224, 0.225),
+            'num_classes': 102,
+            'in_channels': 3,
+            'input_size': (224, 224)
+        },
+        'OxfordIIITPet': {
+            'mean': (0.485, 0.456, 0.406),
+            'std': (0.229, 0.224, 0.225),
+            'num_classes': 37,
+            'in_channels': 3,
+            'input_size': (224, 224)
         }
     }
     
@@ -66,23 +123,124 @@ def get_dataset_stats(dataset_name):
     
     return stats[dataset_name]
 
+# def get_transforms(dataset_name, augment=True):
+#     """
+#     Returns train and test transforms based on the dataset.
+    
+#     Args:
+#         dataset_name: Name of the dataset
+#         augment: Whether to apply data augmentation for training
+#     """
+#     stats = get_dataset_stats(dataset_name)
+#     mean = stats['mean']
+#     std = stats['std']
+#     in_channels = stats['in_channels']
+#     input_size = stats['input_size']
+    
+#     # Base transforms for grayscale datasets (MNIST, FashionMNIST, KMNIST)
+#     if in_channels == 1:
+#         if augment:
+#             train_transform = transforms.Compose([
+#                 transforms.RandomAffine(degrees=15, translate=(0.1, 0.1), scale=(0.9, 1.1)),
+#                 transforms.RandomRotation(10),
+#                 transforms.ToTensor(),
+#                 transforms.Normalize(mean, std)
+#             ])
+#         else:
+#             train_transform = transforms.Compose([
+#                 transforms.ToTensor(),
+#                 transforms.Normalize(mean, std)
+#             ])
+        
+#         test_transform = transforms.Compose([
+#             transforms.ToTensor(),
+#             transforms.Normalize(mean, std)
+#         ])
+    
+#     # High-resolution datasets (ImageNet, Caltech, Food101, etc.)
+#     elif dataset_name in ['ImageNet', 'TinyImageNet', 'Caltech101', 'Caltech256', 
+#                           'Food101', 'Places365', 'Flowers102', 'OxfordIIITPet']:
+#         if augment:
+#             train_transform = transforms.Compose([
+#                 transforms.RandomResizedCrop(input_size[0], scale=(0.08, 1.0)),
+#                 transforms.RandomHorizontalFlip(p=0.5),
+#                 transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.2),
+#                 transforms.RandomRotation(15),
+#                 transforms.ToTensor(),
+#                 transforms.Normalize(mean, std)
+#             ])
+#         else:
+#             train_transform = transforms.Compose([
+#                 transforms.Resize(256),
+#                 transforms.CenterCrop(input_size[0]),
+#                 transforms.ToTensor(),
+#                 transforms.Normalize(mean, std)
+#             ])
+        
+#         test_transform = transforms.Compose([
+#             transforms.Resize(256),
+#             transforms.CenterCrop(input_size[0]),
+#             transforms.ToTensor(),
+#             transforms.Normalize(mean, std)
+#         ])
+    
+#     # Medium-resolution RGB datasets (CIFAR, SVHN, STL10)
+#     else:
+#         if augment:
+#             if dataset_name in ['CIFAR10', 'CIFAR100', 'SVHN']:
+#                 crop_size = 32
+#                 padding = 4
+#             elif dataset_name == 'STL10':
+#                 crop_size = 96
+#                 padding = 12
+#             else:
+#                 crop_size = 32
+#                 padding = 4
+            
+#             train_transform = transforms.Compose([
+#                 transforms.RandomCrop(crop_size, padding=padding),
+#                 transforms.RandomHorizontalFlip(p=0.5),
+#                 transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+#                 transforms.RandomRotation(10),
+#                 transforms.ToTensor(),
+#                 transforms.Normalize(mean, std)
+#             ])
+#         else:
+#             train_transform = transforms.Compose([
+#                 transforms.ToTensor(),
+#                 transforms.Normalize(mean, std)
+#             ])
+        
+#         test_transform = transforms.Compose([
+#             transforms.ToTensor(),
+#             transforms.Normalize(mean, std)
+#         ])
+    
+#     return train_transform, test_transform
+
 def get_transforms(dataset_name, augment=True):
     """
     Returns train and test transforms based on the dataset.
-    
-    Args:
-        dataset_name: Name of the dataset
-        augment: Whether to apply data augmentation for training
+    Ensures images are converted to RGB for 3-channel datasets.
     """
     stats = get_dataset_stats(dataset_name)
     mean = stats['mean']
     std = stats['std']
     in_channels = stats['in_channels']
+    input_size = stats['input_size']
     
-    # Base transforms for grayscale datasets (MNIST, FashionMNIST, KMNIST)
+    # --- Helper to force RGB conversion ---
+    # This prevents errors when a grayscale image is found in an RGB dataset
+    to_rgb = transforms.Lambda(lambda x: x.convert('RGB'))
+    
+    # 1. Grayscale datasets (MNIST, FashionMNIST, KMNIST)
     if in_channels == 1:
+        # Optional: force grayscale if needed, though usually these datasets are clean
+        to_gray = transforms.Lambda(lambda x: x.convert('L'))
+        
         if augment:
             train_transform = transforms.Compose([
+                to_gray,
                 transforms.RandomAffine(degrees=15, translate=(0.1, 0.1), scale=(0.9, 1.1)),
                 transforms.RandomRotation(10),
                 transforms.ToTensor(),
@@ -90,20 +248,64 @@ def get_transforms(dataset_name, augment=True):
             ])
         else:
             train_transform = transforms.Compose([
+                to_gray,
                 transforms.ToTensor(),
                 transforms.Normalize(mean, std)
             ])
         
         test_transform = transforms.Compose([
+            to_gray,
             transforms.ToTensor(),
             transforms.Normalize(mean, std)
         ])
     
-    # RGB datasets (CIFAR10, CIFAR100, SVHN, STL10)
-    else:
+    # 2. High-resolution RGB datasets (ImageNet, Caltech, etc.)
+    elif dataset_name in ['ImageNet', 'TinyImageNet', 'Caltech101', 'Caltech256', 
+                          'Food101', 'Places365', 'Flowers102', 'OxfordIIITPet']:
         if augment:
             train_transform = transforms.Compose([
-                transforms.RandomCrop(32, padding=4) if dataset_name in ['CIFAR10', 'CIFAR100'] else transforms.RandomCrop(96, padding=12) if dataset_name == 'STL10' else transforms.RandomCrop(32, padding=4),
+                to_rgb,  # <--- CRITICAL FIX: Forces 3 channels before processing
+                transforms.RandomResizedCrop(input_size[0], scale=(0.08, 1.0)),
+                transforms.RandomHorizontalFlip(p=0.5),
+                transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.2),
+                transforms.RandomRotation(15),
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std)
+            ])
+        else:
+            train_transform = transforms.Compose([
+                to_rgb,  # <--- CRITICAL FIX
+                transforms.Resize(256),
+                transforms.CenterCrop(input_size[0]),
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std)
+            ])
+        
+        test_transform = transforms.Compose([
+            to_rgb,  # <--- CRITICAL FIX
+            transforms.Resize(256),
+            transforms.CenterCrop(input_size[0]),
+            transforms.ToTensor(),
+            transforms.Normalize(mean, std)
+        ])
+    
+    # 3. Medium-resolution RGB datasets (CIFAR, SVHN, STL10)
+    else:
+        # Determine crop size and padding
+        if dataset_name in ['CIFAR10', 'CIFAR100', 'SVHN']:
+            crop_size = 32
+            padding = 4
+        elif dataset_name == 'STL10':
+            crop_size = 96
+            padding = 12
+        else:
+            crop_size = 32
+            padding = 4
+            
+        if augment:
+            train_transform = transforms.Compose([
+                to_rgb,  # <--- Safety fix for consistency
+                transforms.RandomCrop(crop_size, padding=padding),
                 transforms.RandomHorizontalFlip(p=0.5),
                 transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
                 transforms.RandomRotation(10),
@@ -112,11 +314,13 @@ def get_transforms(dataset_name, augment=True):
             ])
         else:
             train_transform = transforms.Compose([
+                to_rgb,  # <--- Safety fix
                 transforms.ToTensor(),
                 transforms.Normalize(mean, std)
             ])
         
         test_transform = transforms.Compose([
+            to_rgb,  # <--- Safety fix
             transforms.ToTensor(),
             transforms.Normalize(mean, std)
         ])
@@ -127,27 +331,87 @@ def load_dataset(dataset_name, data_path, train, download, transform):
     """
     Loads the specified dataset from torchvision.
     """
-    dataset_class = getattr(datasets, dataset_name)
-    
-    # Special handling for SVHN which uses 'split' instead of 'train'
+    # Special handling for different dataset APIs
     if dataset_name == 'SVHN':
         split = 'train' if train else 'test'
-        return dataset_class(
+        return datasets.SVHN(
             root=data_path,
             split=split,
             download=download,
             transform=transform
         )
-    # Special handling for STL10
     elif dataset_name == 'STL10':
         split = 'train' if train else 'test'
-        return dataset_class(
+        return datasets.STL10(
+            root=data_path,
+            split=split,
+            download=download,
+            transform=transform
+        )
+    elif dataset_name == 'ImageNet':
+        # UPDATE: Point specifically to the 'imagenet' subdirectory
+        # Config path is "/scratch/narjis/", so we join it to get "/scratch/narjis/imagenet"
+        imagenet_root = os.path.join(data_path, 'imagenet')
+        split = 'train' if train else 'val'
+        
+        return datasets.ImageNet(
+            root=imagenet_root, 
+            split=split,
+            transform=transform
+        )
+    elif dataset_name == 'TinyImageNet':
+        raise NotImplementedError("TinyImageNet requires custom dataset implementation.")
+    elif dataset_name == 'Caltech101':
+        # Standard Caltech101 looks for os.path.join(root, 'caltech101')
+        # Since your data is in /scratch/narjis/caltech101, this works with root=/scratch/narjis/
+        return datasets.Caltech101(
+            root=data_path,
+            download=download,
+            transform=transform,
+            target_type='category'
+        )
+    elif dataset_name == 'Caltech256':
+        return datasets.Caltech256(
+            root=data_path,
+            download=download,
+            transform=transform
+        )
+    elif dataset_name == 'Food101':
+        split = 'train' if train else 'test'
+        return datasets.Food101(
+            root=data_path,
+            split=split,
+            download=download,
+            transform=transform
+        )
+    elif dataset_name == 'Places365':
+        split = 'train-standard' if train else 'val'
+        return datasets.Places365(
+            root=data_path,
+            split=split,
+            small=True,
+            download=download,
+            transform=transform
+        )
+    elif dataset_name == 'Flowers102':
+        split = 'train' if train else 'test'
+        return datasets.Flowers102(
+            root=data_path,
+            split=split,
+            download=download,
+            transform=transform
+        )
+    elif dataset_name == 'OxfordIIITPet':
+        split = 'trainval' if train else 'test'
+        return datasets.OxfordIIITPet(
             root=data_path,
             split=split,
             download=download,
             transform=transform
         )
     else:
+        # Standard datasets (MNIST, FashionMNIST, CIFAR10, CIFAR100, KMNIST)
+        dataset_class = getattr(datasets, dataset_name)
         return dataset_class(
             root=data_path,
             train=train,
@@ -155,9 +419,6 @@ def load_dataset(dataset_name, data_path, train, download, transform):
             transform=transform
         )
 
-# =================================================================
-# === THIS CLASS IS UNCHANGED ===
-# =================================================================
 class PrecomputedFeatureDataset(Dataset):
     """
     A dataset class that loads precomputed features and labels from a .pt file.
@@ -165,7 +426,7 @@ class PrecomputedFeatureDataset(Dataset):
     def __init__(self, file_path, rank=0):
         if rank == 0:
             print(f"Loading precomputed data from {file_path}...")
-        data = torch.load(file_path, map_location='cpu') # Load on CPU to save GPU memory
+        data = torch.load(file_path, map_location='cpu')
         self.features = data['features']
         self.labels = data['labels']
         if rank == 0:
@@ -175,9 +436,7 @@ class PrecomputedFeatureDataset(Dataset):
         return len(self.labels)
 
     def __getitem__(self, idx):
-        # Return precomputed feature and its label
         return self.features[idx], self.labels[idx]
-# =================================================================
 
 
 def get_dataloaders(config, rank, world_size, seed=42):
@@ -195,66 +454,61 @@ def get_dataloaders(config, rank, world_size, seed=42):
     val_split_size = config['data']['val_split_size']
     use_augmentation = config['data'].get('augmentation', True)
     
-    # --- Check for precomputed feature usage ---
+    # Check for precomputed feature usage
     use_precomputed = config['data'].get('use_precomputed_features', False)
-    
-    # --- THIS IS THE FIX ---
-    # Get the base path from config, default to 'scratch/narjis'
-    base_path = config['data'].get('precomputed_path', 'scratch/narjis') 
-    # --- END OF FIX ---
+    base_path = config['data'].get('precomputed_path', 'scratch/narjis')
 
     if use_precomputed:
         if config['model']['name'] != 'ResNet' or not config['model']['pretrained']:
             if rank == 0:
                 raise ValueError("use_precomputed_features is True, but model is not 'ResNet' with 'pretrained=True'")
         
-        # --- THIS IS THE FIX ---
-        # Construct the full path to the embedding directory
-        # e.g., scratch/narjis/CIFAR10/precomputed embeding
         embedding_dir = os.path.join(base_path, dataset_name, "precomputed_embeding")
 
         if rank == 0:
             print(f"Using precomputed features from: {embedding_dir}")
         
-        # Construct the full file paths
         train_file = os.path.join(embedding_dir, "train.pt")
         test_file = os.path.join(embedding_dir, "test.pt")
-        # --- END OF FIX ---
 
         if not os.path.exists(train_file) or not os.path.exists(test_file):
-            # This error message will now show the correct path
             raise FileNotFoundError(f"Precomputed files not found at {embedding_dir}. Run src/precompute.py first.")
         
-        # All ranks load directly from the files
         full_train_dataset = PrecomputedFeatureDataset(train_file, rank)
         test_dataset = PrecomputedFeatureDataset(test_file, rank)
         
-        # NOTE: Augmentation is skipped when using precomputed features.
         if use_augmentation and rank == 0:
             print("Warning: Data augmentation is disabled when using precomputed features.")
 
     else:
-        # --- Original logic for loading raw images ---
+        # Load raw images
         if rank == 0:
-            print("Loading raw image data...")
+            print(f"Loading raw image data for {dataset_name}...")
+        
         train_transform, test_transform = get_transforms(dataset_name, augment=use_augmentation)
         
         # Download and load training data (only on rank 0)
         if rank == 0:
-            full_train_dataset = load_dataset(
-                dataset_name=dataset_name,
-                data_path=data_path,
-                train=True,
-                download=True,
-                transform=train_transform
-            )
-            test_dataset = load_dataset(
-                dataset_name=dataset_name,
-                data_path=data_path,
-                train=False,
-                download=True,
-                transform=test_transform
-            )
+            try:
+                full_train_dataset = load_dataset(
+                    dataset_name=dataset_name,
+                    data_path=data_path,
+                    train=True,
+                    download=True,
+                    transform=train_transform
+                )
+                test_dataset = load_dataset(
+                    dataset_name=dataset_name,
+                    data_path=data_path,
+                    train=False,
+                    download=True,
+                    transform=test_transform
+                )
+            except Exception as e:
+                print(f"Error loading dataset {dataset_name}: {e}")
+                if dataset_name == 'ImageNet':
+                    print("ImageNet requires manual download. Please download from https://image-net.org/download.php")
+                raise
         
         # Wait for rank 0 to finish downloading
         torch.distributed.barrier()
@@ -281,7 +535,6 @@ def get_dataloaders(config, rank, world_size, seed=42):
     val_size = int(val_split_size * dataset_size)
     train_size = dataset_size - val_size
 
-    # Use a fixed generator for reproducible splits
     train_dataset, val_dataset = random_split(
         full_train_dataset, [train_size, val_size],
         generator=torch.Generator().manual_seed(seed)

@@ -94,10 +94,6 @@ class RecursiveNet(nn.Module, ABC):
         return logits
 
 
-# =========================
-# Concrete Implementations
-# =========================
-
 class ViTClassificationHead(nn.Module):
     def __init__(self, dim, num_classes):
         super().__init__()
