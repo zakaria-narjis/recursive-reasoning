@@ -15,14 +15,14 @@ model:
     image_size: 224 # Input image size (for ViT models)
     patch_size: 16  # Patch size (for ViT models)
     dim: 384       # Embedding dimension (for ViT models)
-    depth: 6       # Number of transformer layers (for ViT models)
+    depth: 2       # Number of transformer layers (for ViT models)
     heads: 8       # Number of attention heads (for ViT models)
     mlp_dim: 768   # Dimension of the MLP in transformer (for ViT models) x2 the embedding dim
     dropout: 0.1   # Dropout rate (for ViT models)
     
 # Dataset configuration
 data:
-  dataset_name: "Caltech101"  # Options: MNIST, FashionMNIST, CIFAR10, CIFAR100, SVHN, STL10, KMNIST, Caltech101, Caltech256, ImageNet
+  dataset_name: "ImageNet"  # Options: MNIST, FashionMNIST, CIFAR10, CIFAR100, SVHN, STL10, KMNIST, Caltech101, Caltech256, ImageNet
   path: "/scratch/narjis/"  # Path to download/load datasets
   val_split_size: 0.1  # 10% of training data for validation
   augmentation: true  # Whether to apply data augmentation during training
@@ -47,8 +47,10 @@ training:
   learning_rate: 1.0e-4
   weight_decay: 1.0e-4
   scale_lr_by_world_size: true  # If true, effective_lr = learning_rate * world_size
-  lr_scheduler_type: "cosine"  # "cosine", "step", "none"
-  warmup_steps: 200
+  scheduler:
+    lr_scheduler_type: "cosine"  # "cosine", "step", "none"
+    warmup_steps: 300
+
   gradient_accumulation_steps: 1  # Note: DDP + per-step .backward() means grad_accum is complex. Keeping at 1.
   early_stopping:
     enabled: true

@@ -65,11 +65,11 @@ class Trainer:
         
         num_training_steps_per_epoch = len(self.train_loader)
         num_training_steps = num_training_steps_per_epoch * self.config['training']['epochs']
-
         self.scheduler = get_scheduler(
-            name=self.config['training']['lr_scheduler_type'],
+            name=self.config['training']['scheduler']['lr_scheduler_type'],
             optimizer=self.optimizer,
-            num_training_steps=num_training_steps
+            num_training_steps=num_training_steps,
+            warmup_steps= self.config['training']['scheduler']['warmup_steps']
         )
 
     def train_epoch(self):
